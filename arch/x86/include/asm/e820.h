@@ -52,13 +52,27 @@
  * any memory that BIOS might alter over the S3 transition
  */
 #define E820_RESERVED_KERN        128
+/* protected RAM interpreted type, precludes the need to pass extended
+ * attributes to every e820 routine that looks at 'type'
+ */
+#define E820_PROTECTED_KERN	  129
 
 #ifndef __ASSEMBLY__
 #include <linux/types.h>
+#include <linux/ioport.h>
+
 struct e820entry {
 	__u64 addr;	/* start of memory segment */
 	__u64 size;	/* size of memory segment */
 	__u32 type;	/* type of memory segment */
+} __attribute__((packed));
+
+struct e820ext {
+	struct e820entry e;
+	__u32 ext;	/* extended attributes */
+	#define E820_EXT_VALID (1 << 0)
+	#define E820_EXT_NV    (1 << 1)
+	#define E820_EXT_BATT  (1 << 4)
 } __attribute__((packed));
 
 struct e820map {
@@ -74,6 +88,57 @@ struct e820map {
 
 #define BIOS_ROM_BASE		0xffe00000
 #define BIOS_ROM_END		0xffffffff
+
+#ifdef CONFIG_ADR
+#define ADR_MAX_REGIONS 4
+extern struct resource *adr_resource[ADR_MAX_REGIONS];
+
+static inline bool is_e820_protected(struct e820ext *ex)
+{
+	if (ex->e.type == E820_RESERVED &&
+	    (ex->ext == (E820_EXT_VALID | E820_EXT_NV | E820_EXT_BATT)))
+		return true;
+	return false;
+}
+
+/* memory protected by the system ADR (asynchronous dram refresh)
+ * mechanism is accounted as ram for purposes of establishing max_pfn
+ * and mem_map
+ */
+static inline bool is_e820_ram(__u32 type)
+{
+	if (type == E820_RAM || type == E820_PROTECTED_KERN)
+		return true;
+	return false;
+}
+
+static inline void e820_set_adr_resource(struct resource *res)
+{
+	int i;
+
+	for (i = 0; i < ADR_MAX_REGIONS; i++)
+		if (adr_resource[i] == NULL) {
+			adr_resource[i] = res;
+			break;
+		}
+}
+#else
+static inline bool is_e820_protected(struct e820entry *ei)
+{
+	return false;
+}
+
+static inline bool is_e820_ram(__u32 type)
+{
+	if (type == E820_RAM)
+		return true;
+	return false;
+}
+
+static inline void e820_set_adr_resource(struct resource *res)
+{
+}
+#endif
 
 #ifdef __KERNEL__
 /* see comment in arch/x86/kernel/e820.c */
