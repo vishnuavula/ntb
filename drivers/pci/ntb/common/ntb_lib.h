@@ -1,57 +1,63 @@
-/*
- * This file is provided under a dual BSD/GPLv2 license.  When using or
- * redistributing this file, you may do so under either license.
- *
- * GPL LICENSE SUMMARY
- *
- * Copyright(c) 2009 Intel Corporation. All rights reserved.
- *
- * This program is free software; you can redistribute it and/or modify it
- * under the terms and conditions of the GNU General Public License,
- * version 2, as published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful, but WITHOUT
- * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
- * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
- * more details.
- *
- * You should have received a copy of the GNU General Public License along with
- * this program; if not, write to the Free Software Foundation, Inc.,
- * 51 Franklin St - Fifth Floor, Boston, MA 02110-1301 USA.
- *
- * The full GNU General Public License is included in this distribution in
- * the file called "COPYING".
- *
- * BSD LICENSE
- *
- * Copyright(c) 2009 Intel Corporation. All rights reserved.
- *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- *   * Redistributions of source code must retain the above copyright
- *     notice, this list of conditions and the following disclaimer.
- *   * Redistributions in binary form must reproduce the above copyright
- *     notice, this list of conditions and the following disclaimer in
- *     the documentation and/or other materials provided with the
- *     distribution.
- *   * Neither the name of Intel Corporation nor the names of its
- *     contributors may be used to endorse or promote products derived
- *     from this software without specific prior written permission.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
- * ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT OWNER OR CONTRIBUTORS BE
- * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
- * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
- * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
- * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
- * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
- * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
- * POSSIBILITY OF SUCH DAMAGE.
- */
-
+/*****************************************************************************
+ * This file is provided under a dual BSD/GPLv2 license.  When using or 
+ *   redistributing this file, you may do so under either license.
+ * 
+ *   GPL LICENSE SUMMARY
+ * 
+ *   Copyright(c) 2007,2008,2009 Intel Corporation. All rights reserved.
+ * 
+ *   This program is free software; you can redistribute it and/or modify 
+ *   it under the terms of version 2 of the GNU General Public License as
+ *   published by the Free Software Foundation.
+ * 
+ *   This program is distributed in the hope that it will be useful, but 
+ *   WITHOUT ANY WARRANTY; without even the implied warranty of 
+ *   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU 
+ *   General Public License for more details.
+ * 
+ *   You should have received a copy of the GNU General Public License 
+ *   along with this program; if not, write to the Free Software 
+ *   Foundation, Inc., 51 Franklin St - Fifth Floor, Boston, MA 02110-1301 USA.
+ *   The full GNU General Public License is included in this distribution 
+ *   in the file called LICENSE.GPL.
+ * 
+ *   Contact Information:
+ *   Intel Corporation
+ * 
+ *   BSD LICENSE 
+ * 
+ *   Copyright(c) 2007,2008,2009 Intel Corporation. All rights reserved.
+ *   All rights reserved.
+ * 
+ *   Redistribution and use in source and binary forms, with or without 
+ *   modification, are permitted provided that the following conditions 
+ *   are met:
+ * 
+ *     * Redistributions of source code must retain the above copyright 
+ *       notice, this list of conditions and the following disclaimer.
+ *     * Redistributions in binary form must reproduce the above copyright 
+ *       notice, this list of conditions and the following disclaimer in 
+ *       the documentation and/or other materials provided with the 
+ *       distribution.
+ *     * Neither the name of Intel Corporation nor the names of its 
+ *       contributors may be used to endorse or promote products derived 
+ *       from this software without specific prior written permission.
+ * 
+ *   THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS 
+ *   "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT 
+ *   LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR 
+ *   A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT 
+ *   OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, 
+ *   SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT 
+ *   LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, 
+ *   DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY 
+ *   THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT 
+ *   (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE 
+ *   OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+ * 
+ * 
+ *  version: Embedded.Release.L.0.5.1-2
+ ****************************************************************************/
 /*****************************************************************************
  * FILE CONTENTS: Data and types private to the driver. These APIs will not
  * be exposed to a client driver or user space application.
@@ -109,9 +115,15 @@ there is a silicon bug that requires us to write all F's here for now.
 #define SEMAPHORE_ONE_TO_CLEAR  0x01 */
 #define SEMAPHORE_ONE_TO_CLEAR  0xffff
 
-#define LOWER_32     0x00000000FFFFFFFF
-#define BIT_SHIFT_32 0x20
-#define OFFSET_4     0x4
+#define LOWER_32               0x00000000FFFFFFFF
+#define BIT_SHIFT_32           0x20
+#define OFFSET_4               0x4
+#define POLICY_NO              0x04
+#define POLICY_HEARTBEAT_BIT   0x00
+#define POLICY_BIT             0x01
+#define POLICY_PE_BIT          0x02
+#define POLICY_PN_BIT          0x03
+#define CALLBACK_EVENT         0x01
 
 /* NTB_CNTL SETTINGS */
 #define NTB_SECONDARY_SPACE_LOCKED                0x00000001
@@ -129,18 +141,30 @@ there is a silicon bug that requires us to write all F's here for now.
 #define NTB_PMSIX_TABLE_DEFAULT_OFFSET            0x2000
 #define NTB_SMSIX_TABLE_DEFAULT_OFFSET            0x4000
 
-#define NTB_LIMIT_MAX_23                          0xD0
-#define NTB_LIMIT_MAX_45                          0xD1
+#define NTB_PRIMARY_LIMIT_MAX_23                  0xD0
+#define NTB_PRIMARY_LIMIT_MAX_45                  0xD1
+#define NTB_SECONDARY_LIMIT_MAX_23                0xD2
+#define NTB_SECONDARY_LIMIT_MAX_45                0xD3
 
-#define BUS_MASTER_MEMORY_OFFSET 0x504
-#define BUS_MASTER_MEMORY_ENABLE 0x06
-#define DOORBELL_MASK_OFFSET     0x62
-#define DOORBELL_MASK_VALUE      0x8000
+#define BUS_MASTER_MEMORY_OFFSET                  0x504
+#define BUS_MASTER_MEMORY_ENABLE                  0x06
+#define DOORBELL_PRIMARY_MASK_OFFSET              0x62
+#define DOORBELL_SECONDARY_MASK_OFFSET            0x66
+#define DOORBELL_MASK_VALUE                       0x8000
+
+#define NTB_WCCNTRL_OFFSET                        0xE0
+#define NTB_WCCNTRL_WRITE                         0x00000001
+#define NTB_WCCNTRL_BIT                           0x4000
+#define NTB_CONFIG_AND_SIZE_REGS                  0x08
+#define ALIGNMENT_CHECK                           0x000000000000000FFF
 
 /* PCI Configuration Registers */
 
-#define NTB_LINK_CONTROL_OFFSET        0x1A0
-#define NTB_LINK_STATUS_OFFSET         0x1A2
+#define NTB_LINK_CONTROL_OFFSET                   0x1A0
+#define NTB_LINK_STATUS_OFFSET                    0x1A2
+
+#define PRIMARY_CONFIG                            0x01
+#define SECONDARY_CONFIG                          0x02
 
 #ifndef NTB_SCRATCHPAD_REGS_DEFINED
 #define NTB_SCRATCHPAD_REGS_DEFINED
@@ -227,7 +251,8 @@ enum ntb_mmio_offsets {
 
 /* default register values */
 enum ntb_doorbell_default_values {
-	NTB_HEARTBEAT            = 0x01,
+	NTB_HEARTBEAT_23         = 0x01,
+	NTB_HEARTBEAT_45         = 0x02,
 	NTB_EVENT_NOTIFICATION   = 0x400,
 	NTB_EVENT_ACKNOWLEDGMENT = 0x800,
 	NTB_LINK_STATUS_CHANGE   = 0x8000,
