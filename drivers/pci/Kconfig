@@ -69,3 +69,5 @@ config PCI_IOV
 	  physical resources.
 
 	  If unsure, say N.
+
+source "drivers/pci/ntb/Kconfig"

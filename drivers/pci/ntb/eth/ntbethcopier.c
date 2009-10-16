@@ -1,0 +1,137 @@
+/*
+ * This program implements API to control NTB hardware.
+ * Copyright (c) 2009, Intel Corporation.
+ *
+ * This program is free software; you can redistribute it and/or modify it
+ * under the terms and conditions of the GNU General Public License,
+ * version 2, as published by the Free Software Foundation.
+ *
+ * This program is distributed in the hope it will be useful, but WITHOUT
+ * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
+ * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
+ * more details.
+ *
+ * You should have received a copy of the GNU General Public License along with
+ * this program; if not, write to the Free Software Foundation, Inc., 
+ * 51 Franklin St - Fifth Floor, Boston, MA 02110-1301 USA.
+ *
+ */
+
+#include <linux/dmaengine.h>
+
+#include "ntbethcopier.h"
+#include "ntbdev.h"
+
+int ntbeth_copier_init(struct ntbeth_copier_info *pcopier, int usecb3)
+{
+   dma_cap_mask_t dma_mask;
+   pcopier->use_cb3_dma_engine = usecb3;
+   if(pcopier->use_cb3_dma_engine)
+   {
+      dma_cap_zero(dma_mask);
+      dma_cap_set(DMA_MEMCPY,dma_mask);
+#ifdef NTBETH_USE_CB3
+     // pcopier->chan = dma_request_channel(dma_mask, NULL, NULL);
+      if(pcopier->chan == NULL)
+      {
+        printk("Copier initialization failed\n");
+        return(NTBETH_FAIL);
+      }
+#endif 
+   }
+  NTBETHDEBUG("Initialized Copier\n");
+  return (NTBETH_SUCCESS);
+}
+
+int ntbeth_copier_cleanup(struct ntbeth_copier_info *pcopier)
+{
+  if(pcopier->use_cb3_dma_engine)
+  {
+#ifdef NTBETH_USE_CB3
+   // dma_release_channel(pcopier->chan);  
+#endif
+    return (NTBETH_SUCCESS);
+  }
+  return NTBETH_SUCCESS;
+}
+int ntbeth_copier_copy_to_skb(struct ntbeth_copier_info *pcopier, char *pmsg, int length, struct sk_buff *skb, void (*pcallback)(void *), void *pref)
+{
+   unsigned long long flags;
+   dma_addr_t src, dest;
+   struct dma_async_tx_descriptor *tx;
+   dma_cookie_t cookie;
+
+   if(pcopier->use_cb3_dma_engine)
+   {
+      if(ntbdev_get_bus_address(NULL, pmsg, length, &src))
+      {
+        printk("Unable to obtain PCI address for the given src address\n");
+        return NTBETH_FAIL;
+      }
+      if(ntbdev_get_bus_address(NULL, skb->data, length, &dest))
+      {
+        printk("Unable to obtain PCI address for the given dest address\n");
+        return NTBETH_FAIL;
+      }
+      flags = DMA_CTRL_ACK | DMA_COMPL_SKIP_DEST_UNMAP | DMA_PREP_INTERRUPT;
+      tx= pcopier->chan->device->device_prep_dma_memcpy(pcopier->chan, dest, src, length, flags);
+     tx->callback = pcallback; 
+     tx->callback_param = pref; 
+     cookie = tx->tx_submit(tx);
+     if(dma_submit_error(cookie))
+     {
+         printk("Submit Error Returned cookied 0x%Lx\n",(unsigned long long) cookie);
+         return NTBETH_FAIL;
+     }
+     dma_async_issue_pending(pcopier->chan); 
+   }
+   else
+   {
+      // copy message to sk buffer and call callback
+       memcpy(skb_put(skb, length), pmsg, length); 
+       NTBETHDEBUG("Copied to SKB from  RxCq\n");
+      pcallback(pref);
+    }
+   return NTBETH_SUCCESS; 
+}
+
+int ntbeth_copier_copy_from_skb(struct ntbeth_copier_info *pcopier, struct sk_buff *skb, char *pmsg, int length, void (*pcallback)(void *), void *pref)
+{
+   unsigned long long flags;
+   dma_addr_t src, dest;
+   struct dma_async_tx_descriptor *tx;
+   dma_cookie_t cookie;
+
+   if(pcopier->use_cb3_dma_engine)
+   {
+      if(ntbdev_get_bus_address(NULL, skb->data, length, &src))
+      {
+        printk("Unable to obtain PCI address for the given src address\n");
+        return NTBETH_FAIL;
+      }
+      if(ntbdev_get_bus_address(NULL, pmsg, length, &dest))
+      {
+        printk("Unable to obtain PCI address for the given dest address\n");
+        return NTBETH_FAIL;
+      }
+      flags = DMA_CTRL_ACK | DMA_COMPL_SKIP_DEST_UNMAP | DMA_PREP_INTERRUPT;
+      tx= pcopier->chan->device->device_prep_dma_memcpy(pcopier->chan, dest, src, length, flags);
+     tx->callback = pcallback; 
+     tx->callback_param = pref; 
+     cookie = tx->tx_submit(tx);
+     if(dma_submit_error(cookie))
+     {
+         printk("Submit Error Returned cookied 0x%Lx\n",(unsigned long long) cookie);
+         return NTBETH_FAIL;
+     }
+     dma_async_issue_pending(pcopier->chan); 
+   }
+   else
+   {
+      // copy message to sk buffer and call callback
+       NTBETHDEBUG("Copied from SKB to  txCq\n");
+       memcpy(pmsg, skb->data, length); 
+      pcallback(pref);
+   }
+   return NTBETH_SUCCESS; 
+}
