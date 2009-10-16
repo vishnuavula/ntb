@@ -1,5 +1,5 @@
 /*
- * This program implements API to control NTB hardware.
+ * This program implements network driver over NTB hardware.
  * Copyright (c) 2009, Intel Corporation.
  *
  * This program is free software; you can redistribute it and/or modify it
@@ -15,9 +15,14 @@
  * this program; if not, write to the Free Software Foundation, Inc., 
  * 51 Franklin St - Fifth Floor, Boston, MA 02110-1301 USA.
  *
+ * The full GNU General Public License is included in this distribution in
+ * the file called "COPYING".
+ *
  */
+
 #ifndef NTBETHCQ_H
 #define NTBETHCQ_H
+
 
 #ifdef __cplusplus
 extern "C"
@@ -25,6 +30,9 @@ extern "C"
 #endif
 
 #include "ntbethconf.h"
+
+#define NTBETH_RX_CQ   1
+#define NTBETH_TX_CQ   2
 
 /* Tyedefition for an element of ciruclar queue
  */
@@ -36,9 +44,13 @@ struct q_element
 
 /*
  * This structure defines the complete ciruclar Queue
+ * local structure
  */
  struct cq
 {
+  unsigned int uiCqType;   // 1 means RX CQ desc for CQ  maintained locally
+                           // 2 means TX CQ desc for CQ maintained remotely
+  struct cq *pRemoteCq;
   unsigned int uiCqSize;
   unsigned int uiPutIndex;
   unsigned int uiGetIndex;
@@ -48,6 +60,7 @@ struct q_element
   unsigned int uiAvailGetIndex;
   unsigned int uiAvailPutWrapBit;
   unsigned int uiAvailGetWrapBit;
+  unsigned int uiSignature;
   struct q_element sQArray[1];
 };
 
@@ -59,7 +72,7 @@ struct q_element
 
 
 // return value -1 is error zero is success
-int init_cq(struct cq *pCq,int iSize);
+int init_cq(struct cq *pCq,int iSize, unsigned int uiCqType,void *pRemoteCq);
 
 // directly copy the given element into current cq put entry and update the put pointer.
 int put_into_cq(struct cq *pCq, struct q_element* psEle);
@@ -81,12 +94,13 @@ void *cq_get_current_get_entry_loc(struct cq *cq);
 int cq_update_get_ptr(struct cq *cq);
 // updates put ptr
 int cq_update_put_ptr(struct cq *cq);
+int cq_validate(struct cq *cq);
 
 // calculate number of entries 
 int cq_calculate_num_entries(int size);
 
 //dumps cq data structure 
-void cq_dump_debug_data(struct cq *cq);
+void cq_dump_debug_data(struct cq *cq, char *fmtstr);
 
 #ifdef __cplusplus
 }

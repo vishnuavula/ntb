@@ -1,5 +1,5 @@
 /*
- * This program implements API to control NTB hardware.
+ * This program implements network driver onver NTB hardware. 
  * Copyright (c) 2009, Intel Corporation.
  *
  * This program is free software; you can redistribute it and/or modify it
@@ -15,7 +15,11 @@
  * this program; if not, write to the Free Software Foundation, Inc., 
  * 51 Franklin St - Fifth Floor, Boston, MA 02110-1301 USA.
  *
+ * The full GNU General Public License is included in this distribution in
+ * the file called "COPYING".
+ *
  */
+
 #include "ntbdev.h"
 
 struct ntbeth_ntbdev *gntbdev;
@@ -24,15 +28,20 @@ void ntbeth_bar23_callback(ntb_client_handle_t handle, int16_t doorbell_value, s
 {
   struct ntbeth_ntbdev *pdev = gntbdev; 
      NTBETHDEBUG( "Entered ntbeth_bar23_callback db val 0x%x\n",doorbell_value);
+     
+     if(doorbell_value & 0x8000)
+     {
+       NTBETHDEBUG( "Link Change Door bEll set \n");
+     }
      if(doorbell_value & (1<< pdev->rx_int_doorbell_num))
      {
-       NTBETHDEBUG( "Invoking rx_interrupt callback\n");
-       if(pdev->prx_int_callback)
-       pdev->prx_int_callback(pdev->rx_int_callback_ref);
+         NTBETHDEBUG( "Invoking rx_interrupt callback\n");
+         if(pdev->prx_int_callback)
+         pdev->prx_int_callback(pdev->rx_int_callback_ref);
      }
      if(doorbell_value & (0x2 << pdev->rx_int_doorbell_num))
      {
-       NTBETHDEBUG( "Invoking tx_ack_interrupt callback\n");
+        NTBETHDEBUG( "Invoking tx_ack_interrupt callback\n");
        pdev->ptx_ack_int_callback(pdev->tx_ack_int_callback_ref);
        
      }
@@ -68,6 +77,7 @@ int ntbdev_init(struct ntbeth_ntbdev *pdev, int bar23_size, int bar45_size, int 
   pdev->barinfo[0].bar_size = bar23_size;
   pdev->barinfo[1].bar_size = bar45_size;
   pdev->rx_int_doorbell_num = rx_int_doorbell_num;
+  spin_lock_init(&pdev->db_lock);
 
  gntbdev = pdev; // remember pointer to ntbdev here because in NTB callbacks we do not have a facility to get the context back. Thus we use global variable 
   // obtain handle to the ntb api functions
@@ -111,6 +121,8 @@ int ntbdev_init(struct ntbeth_ntbdev *pdev, int bar23_size, int bar45_size, int 
 
  intbits |= 0x4000; // WC flush ack interrupt
   
+  
+
 // set policy:
   //we are interested in rx_int_doorbell, txack door bell and link change interrupts only. we set the policy using bar23 client handle 
 
@@ -128,6 +140,13 @@ int ntbdev_init(struct ntbeth_ntbdev *pdev, int bar23_size, int bar45_size, int 
   temp_value = *(unsigned int *)((char *)pdev->ntbdevice->mm_regs + 0x80 );
  
   NTBETHDEBUG( "Jiffies value read from SPAD0 0x%x\n", temp_value);
+
+ // set BAR45 to point to remote side secondary BAR01 
+ // this is required to send door bell interrupts directly to the remote side
+
+//  *(unsigned long long *)((char *)pdev->ntbdevice->mm_regs + 0x18) = *(unsigned long long *)((char *)pdev->ntbdevice->mm_regs + 0x40);
+  *(unsigned long long *)((char *)pdev->ntbdevice->mm_regs + 0x18) = 0;
+
   return 0;
 }
 
@@ -196,7 +215,11 @@ int ntbdev_cleanup(struct ntbeth_ntbdev *pdev)
   }
   return 0;
 }
-
+void ntbdev_send_doorbell(struct ntbeth_ntbdev *pdev, unsigned short doorbell_value)
+{
+   *(unsigned short *)((char *)(pdev->ntbdevice->pci_bar_45_virt) + 0x60) = doorbell_value;
+   return;
+}
 // we send interrupt on the rx_int doorbell. but also send wc flush along with it, for validation purposes. we maintain count of rx_int_doorbells that we sent and we expect equal number of acks for the doorbell at rx_int_doorbell_num +1. And we also keep track of how many WC FLUSH are acked. we make sure that we only hit WC Flush if the bit is 0. Otherwise we do not hit WC Flush bit.
 void ntbdev_send_packet_txed_interrupt(struct ntbeth_ntbdev *pdev)
 {
@@ -209,11 +232,13 @@ void ntbdev_send_packet_txed_interrupt(struct ntbeth_ntbdev *pdev)
   // set bit corresponding the door bell we are using 
    doorbell_value <<= pdev->rx_int_doorbell_num;
   
-// writing to door bell can offloaded to CB3 DMA engine 
+  // writing to door bell can offloaded to CB3 DMA engine 
   // write to door bell 
-  pdev->funcs.ntb_write_doorbell(pdev->barinfo[NTBETH_BAR23INFO_INDEX].handle, doorbell_value);
-  pdev->pktsent_count++;
+  ntbdev_send_doorbell(pdev, doorbell_value);
+  // use write cache flush as a mechanism to inform pkt availability.
+
 #if 0
+  //pdev->funcs.ntb_write_doorbell(pdev->barinfo[NTBETH_BAR23INFO_INDEX].handle, doorbell_value);
   // write to WCCNTRL register to flush out the cache
   if(!((*(unsigned int *)((char *)bar01_virt_addr + WCCNTRL_REG_OFFSET)) & 1))
   {
@@ -293,7 +318,7 @@ void ntbdev_send_packet_transfer_ack_interrupt(struct ntbeth_ntbdev *pdev)
   
 // writing to door bell can offloaded to CB3 DMA engine 
   // write to door bell 
-  pdev->funcs.ntb_write_doorbell(pdev->barinfo[NTBETH_BAR23INFO_INDEX].handle, doorbell_value);
+  ntbdev_send_doorbell(pdev, doorbell_value);
   NTBETHDEBUG("Sent tx_ack  Interrupt to Remote\n");
 }
 
@@ -310,7 +335,7 @@ void ntbdev_send_ping_doorbell_interrupt(struct ntbeth_ntbdev *pdev)
   
   // writing to door bell can be offloaded to CB3 DMA engine 
   // write to door bell 
-  pdev->funcs.ntb_write_doorbell(pdev->barinfo[NTBETH_BAR23INFO_INDEX].handle, doorbell_value);
+  ntbdev_send_doorbell(pdev, doorbell_value);
   NTBETHDEBUG("Sent Ping Interrupt to Remote\n");
 }
 void ntbdev_send_ping_ack_doorbell_interrupt(struct ntbeth_ntbdev *pdev)
@@ -326,7 +351,7 @@ void ntbdev_send_ping_ack_doorbell_interrupt(struct ntbeth_ntbdev *pdev)
   
   // writing to door bell can be offloaded to CB3 DMA engine 
   // write to door bell 
-  pdev->funcs.ntb_write_doorbell(pdev->barinfo[NTBETH_BAR23INFO_INDEX].handle, doorbell_value);
+  ntbdev_send_doorbell(pdev, doorbell_value);
   NTBETHDEBUG("Sent Ping Ack Interrupt to Remote\n");
 }
 void ntbdev_send_close_interrupt(struct ntbeth_ntbdev *pdev)
@@ -342,7 +367,7 @@ void ntbdev_send_close_interrupt(struct ntbeth_ntbdev *pdev)
   
   // writing to door bell can be offloaded to CB3 DMA engine 
   // write to door bell 
-  pdev->funcs.ntb_write_doorbell(pdev->barinfo[NTBETH_BAR23INFO_INDEX].handle, doorbell_value);
+  ntbdev_send_doorbell(pdev, doorbell_value);
   NTBETHDEBUG("Sent close  Interrupt to Remote\n");
 }
 
