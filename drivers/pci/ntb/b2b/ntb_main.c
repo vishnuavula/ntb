@@ -21,7 +21,7 @@
 
 #include "../common/ntb_main.h"
 
-MODULE_LICENSE("Intel Proprietary");
+MODULE_LICENSE("GPL");
 
 /* PRIVATE */
 static int ntb_init(void);
