@@ -1,5 +1,5 @@
 /*
- * This program implements API to control NTB hardware.
+ * This program implements network driver over NTB hardware.
  * Copyright (c) 2009, Intel Corporation.
  *
  * This program is free software; you can redistribute it and/or modify it
@@ -15,7 +15,11 @@
  * this program; if not, write to the Free Software Foundation, Inc., 
  * 51 Franklin St - Fifth Floor, Boston, MA 02110-1301 USA.
  *
+ * The full GNU General Public License is included in this distribution in
+ * the file called "COPYING".
+ *
  */
+
 #ifndef NTBETHCOPIER_H
 #define NTBETHCOPIER_H
 
@@ -47,6 +51,9 @@ struct ntbeth_copier_info
 // This field is used only if CB3 DMA engine is used to do the memcpy transfers.
 	struct dma_chan * chan;
         int use_cb3_dma_engine;
+// debug pkt info
+       unsigned int dbgpkt_len;
+       unsigned int dbgpkt_counter;
 };
 
 int ntbeth_copier_init(struct ntbeth_copier_info *pcopier, int usecb3);
@@ -54,5 +61,6 @@ int ntbeth_copier_copy_to_skb(struct ntbeth_copier_info *pcoiper, char *pmsg, in
 int ntbeth_ntb_doorbell_enable(struct ntbeth_copier_info *pcopier);
 int ntbeth_copier_cleanup(struct ntbeth_copier_info *pcopier);
 int ntbeth_copier_copy_from_skb(struct ntbeth_copier_info *pcopier, struct sk_buff *skb, char *pmsg, int length, void (*pcallback)(void *), void *pref);
+void ntbeth_copier_memcpy(char *dest, char *src, int length);
 
 #endif 

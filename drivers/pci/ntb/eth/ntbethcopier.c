@@ -1,5 +1,5 @@
 /*
- * This program implements API to control NTB hardware.
+ * This program implements network driver onver NTB hardware. 
  * Copyright (c) 2009, Intel Corporation.
  *
  * This program is free software; you can redistribute it and/or modify it
@@ -15,6 +15,9 @@
  * this program; if not, write to the Free Software Foundation, Inc., 
  * 51 Franklin St - Fifth Floor, Boston, MA 02110-1301 USA.
  *
+ * The full GNU General Public License is included in this distribution in
+ * the file called "COPYING".
+ *
  */
 
 #include <linux/dmaengine.h>
@@ -26,6 +29,8 @@ int ntbeth_copier_init(struct ntbeth_copier_info *pcopier, int usecb3)
 {
    dma_cap_mask_t dma_mask;
    pcopier->use_cb3_dma_engine = usecb3;
+   pcopier->dbgpkt_len = 4;
+   pcopier->dbgpkt_counter = 0;
    if(pcopier->use_cb3_dma_engine)
    {
       dma_cap_zero(dma_mask);
@@ -88,11 +93,28 @@ int ntbeth_copier_copy_to_skb(struct ntbeth_copier_info *pcopier, char *pmsg, in
    else
    {
       // copy message to sk buffer and call callback
-       memcpy(skb_put(skb, length), pmsg, length); 
+       ntbeth_copier_memcpy(skb_put(skb, length), pmsg, length); 
+#ifdef USE_DBG_PKTS
+       printk("\t\t\t\t\tRxed Pkt Counter %d Lenth %d  Pat 0x%x\n", *(unsigned int *)pmsg, length, *(unsigned int *)(pmsg + 4));
+#endif 
        NTBETHDEBUG("Copied to SKB from  RxCq\n");
       pcallback(pref);
     }
    return NTBETH_SUCCESS; 
+}
+
+void ntbeth_copier_memcpy(char *dest, char *src, int length)
+{
+  int num_longs = length/8;
+  unsigned long long *psrc, *pdest;
+  int i;
+  psrc = (unsigned long long *)src;
+  pdest = (unsigned long long *)dest;
+  for(i=0; i < num_longs; i++)
+  {
+    pdest[i]  = psrc[i];
+  }
+  memcpy(pdest + i, psrc + i, length%8);
 }
 
 int ntbeth_copier_copy_from_skb(struct ntbeth_copier_info *pcopier, struct sk_buff *skb, char *pmsg, int length, void (*pcallback)(void *), void *pref)
@@ -130,7 +152,17 @@ int ntbeth_copier_copy_from_skb(struct ntbeth_copier_info *pcopier, struct sk_bu
    {
       // copy message to sk buffer and call callback
        NTBETHDEBUG("Copied from SKB to  txCq\n");
-       memcpy(pmsg, skb->data, length); 
+#ifdef USE_DBG_PKTS
+   // instead of sending the IP packet we will send debug pkt
+   // debug packet format is length(4),counter (4), payload pattern 
+     printk("Copier Txing pkt %d\n", pcopier->dbgpkt_counter); 
+     *(unsigned int *)((char *)pmsg-4) = pcopier->dbgpkt_len;
+     *(unsigned int *)((char *)pmsg) = pcopier->dbgpkt_counter++;
+     *(unsigned int *)((char *)pmsg+4) = 0xA5A5A5A5;
+     
+#else
+       ntbeth_copier_memcpy(pmsg, skb->data, length); 
+#endif 
       pcallback(pref);
    }
    return NTBETH_SUCCESS; 

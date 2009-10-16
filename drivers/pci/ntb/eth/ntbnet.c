@@ -1,5 +1,5 @@
 /*
- * This program implements API to control NTB hardware.
+ * This program implements network nriver over NTB hardware.
  * Copyright (c) 2009, Intel Corporation.
  *
  * This program is free software; you can redistribute it and/or modify it
@@ -15,7 +15,11 @@
  * this program; if not, write to the Free Software Foundation, Inc., 
  * 51 Franklin St - Fifth Floor, Boston, MA 02110-1301 USA.
  *
+ * The full GNU General Public License is included in this distribution in
+ * the file called "COPYING".
+ *
  */
+
 #include <linux/module.h>
 #include <linux/init.h>
 #include <linux/moduleparam.h>
@@ -60,6 +64,12 @@ module_param(bar23_size,int, 0);
 static int bar45_size = 0x100000 ;
 module_param(bar45_size,int, 0);
 
+static int turnoff_tx = 0;
+module_param(turnoff_tx,int, 0);
+
+static int turnoff_pkt_count = 0;
+module_param(turnoff_pkt_count,int, 0);
+
 struct ntbeth_priv * ntbeth_device;
 
 static const struct net_device_ops ntbeth_netdev_ops = {
@@ -89,8 +99,6 @@ void ntbeth_tx_timeout(struct net_device *netdev)
        priv->tx_timeout_count++;    
        NTBETHDEBUG("NTBETH:ERROR: tx timed out%d\n",priv->tx_timeout_count);
        netdev->trans_start = jiffies;
-       netif_wake_queue(netdev);
-       netif_stop_queue(netdev);
        spin_unlock_bh(&priv->lock);
        return;
 }
@@ -101,18 +109,8 @@ int ntbeth_open(struct net_device *dev)
 	priv = netdev_priv(dev);
 	NTBETHDEBUG("Made it to ntbeth_open\n");
 	memcpy(dev->dev_addr, NTBETH_MAC, ETH_ALEN);
-
-        priv->local_drv_if_status = DRVRIF_UP;
-        netif_start_queue(dev);
-        netif_stop_queue(dev);
-        // start with link status as down
-        priv->lnkstatus = NTBETH_STATUS_LINKDOWN;
-        ntbeth_decide_traffic_on_off(dev);
-
-        // send ping interrup to the other side if we get ping ack then we change the link state to up  and resume queueing other wise we leave link as down until we get ping from the remote side
+        update_peer_status(dev, NTBETH_LOCAL_PEER_UP);
         ntbdev_send_ping_doorbell_interrupt(&priv->ntbdev);
-
-        // during running, if we noticed that our txq is full then we assume link is down too. we resume the link back again when we received tx_ack or rx_int etc.
         return 0;
 }
 
@@ -121,8 +119,7 @@ int ntbeth_close(struct net_device *dev)
 	struct ntbeth_priv * priv;
 	NTBETHDEBUG("Made it to ntbeth_close\n");
 	priv = netdev_priv(dev);
-        priv->local_drv_if_status = DRVRIF_DOWN;
-        ntbeth_decide_traffic_on_off(dev);
+        update_peer_status(dev, NTBETH_LOCAL_PEER_DOWN);
         ntbdev_send_close_interrupt(&priv->ntbdev);
 	return 0;
 }
@@ -134,6 +131,7 @@ void rx_copy_callback(void *pref)
 	struct net_device *dev = (struct net_device *)skb->dev;
 	struct ntbeth_priv *priv = netdev_priv(dev);
         NTBETHDEBUG("Made it to rx_copy_callback \n");
+#ifndef USE_DBG_PKTS
         skb->protocol = eth_type_trans(skb, dev);
         priv->stats.rx_packets++;
         priv->stats.rx_bytes += skb->len;
@@ -145,11 +143,12 @@ void rx_copy_callback(void *pref)
           else
            printk("ntheth: RX PACKET has some problems in the Kernel\n");
         }
+#else
+  dev_kfree_skb(skb);
+#endif 
         cq_update_get_ptr(priv->rxcq);
         // send tx ack now
-        ntbdev_send_packet_transfer_ack_interrupt(&priv->ntbdev);
-        priv->tx_packet_ack_sent_count++;
-        NTBETHDEBUG("ntheth: tx_packet_ack_sent_count %d\n", priv->tx_packet_ack_sent_count);
+     //   ntbdev_send_packet_transfer_ack_interrupt(&priv->ntbdev);
         return;
 }	
 
@@ -157,41 +156,27 @@ void ntbeth_lnkchg_interrupt(void *pref)
 {
 	struct net_device *dev = (struct net_device *)pref;
 	struct ntbeth_priv *priv = netdev_priv(dev);
-         // act based on link change
-        if(priv->lnkstatus == NTBETH_STATUS_LINKUP)
-        {
-            priv->lnkstatus = NTBETH_STATUS_LINKDOWN;
-            netif_carrier_off(dev);
-        }
-        else
-        {
-            priv->lnkstatus = NTBETH_STATUS_LINKUP;
-            netif_carrier_on(dev);
-        }
+        update_peer_status(dev, NTBETH_REMOTE_PEER_DOWN); 
+        // send ping
+        ntbdev_send_ping_doorbell_interrupt(&priv->ntbdev);
 	return;
 }
 
 void ntbeth_ping_ack_interrupt(void *pref)
 {
 	struct net_device *dev = (struct net_device *)pref;
-	struct ntbeth_priv *priv = netdev_priv(dev);
+	//struct ntbeth_priv *priv = netdev_priv(dev);
         NTBETHDEBUG("Made it to ping ack interrupt routine\n");
-        spin_lock_bh(&priv->lock);
-        priv->remote_drv_if_status = DRVRIF_UP;
-        ntbeth_decide_traffic_on_off(dev);
-        spin_unlock_bh(&priv->lock);
+        update_peer_status(dev, NTBETH_REMOTE_PEER_UP); 
 	return;
 }
 
 void ntbeth_close_interrupt(void *pref)
 {
 	struct net_device *dev = (struct net_device *)pref;
-	struct ntbeth_priv *priv = netdev_priv(dev);
-        NTBETHDEBUG("Made it to close interrupt routine\n");
-        spin_lock_bh(&priv->lock);
-        priv->remote_drv_if_status = DRVRIF_DOWN;
-        ntbeth_decide_traffic_on_off(dev);
-        spin_unlock_bh(&priv->lock);
+	//struct ntbeth_priv *priv = netdev_priv(dev);
+        update_peer_status(dev, NTBETH_REMOTE_PEER_DOWN); 
+ // do not need to send close back
 	return;
 }
 
@@ -200,31 +185,20 @@ void ntbeth_ping_interrupt(void *pref)
 	struct net_device *dev = (struct net_device *)pref;
 	struct ntbeth_priv *priv = netdev_priv(dev);
         NTBETHDEBUG("Made it to ping interrupt routine\n");
-        spin_lock_bh(&priv->lock);
-        priv->remote_drv_if_status = DRVRIF_UP;
-        ntbeth_decide_traffic_on_off(dev);
-        // send ping ack back
-        ntbdev_send_ping_ack_doorbell_interrupt(&priv->ntbdev);
-        spin_unlock_bh(&priv->lock);
+        update_peer_status(dev, NTBETH_REMOTE_PEER_UP); 
+        // send ping ack
+        if((priv->peer_status & NTBETH_LOCAL_MASK) == NTBETH_LOCAL_PEER_UP)
+        {
+           ntbdev_send_ping_ack_doorbell_interrupt(&priv->ntbdev);
+        }
 	return;
 }
 
-// check if we stall netq because txq is full if so we unstall the queue.
 void ntbeth_txack_interrupt(void *pref)
 {
-	struct net_device *dev = (struct net_device *)pref;
-	struct ntbeth_priv *priv = netdev_priv(dev);
+	//struct net_device *dev = (struct net_device *)pref;
+	//struct ntbeth_priv *priv = netdev_priv(dev);
         NTBETHDEBUG("Made it to txack interrupt routine\n");
-        spin_lock_bh(&priv->lock);
-        priv->tx_packet_ack_rcvd_count++;
-        NTBETHDEBUG("tx_packet_ack_rcvd_count %d\n", priv->tx_packet_ack_rcvd_count);
-        if(priv->txq_status == NTBETH_Q_FULL)
-        {
-          NTBETHDEBUG("resuming  queue from txack_int handler\n");
-          priv->txq_status = NTBETH_Q_NOT_FULL;
-          netif_wake_queue(dev);
-        } 
-        spin_unlock_bh(&priv->lock);
 	return;
 }
 
@@ -236,29 +210,21 @@ void ntbeth_rx_interrupt(void * pref)
         char *data;
         unsigned int len;
         NTBETHDEBUG("ntbeth_rx_interrupt entered with devptr 0x%Lx\n",(unsigned long long)dev);
+        NTBETHDEBUG("ntbeth_rx_interrupt entered with priv 0x%Lx\n",(unsigned long long)priv);
         spin_lock_bh(&priv->lock);
         // pull message from 
-        do
+        while(!(is_cq_empty(priv->rxcq)))
         {
            data = cq_get_current_get_entry_loc(priv->rxcq);  
            if(data == 0)
            {
              printk(KERN_INFO "ntbeth: ntbeth_rx_interrupt received but rxq is empty\n");
-             printk(KERN_INFO "ntbeth: Dumping Debug Data\n");
-             //cq_dump_debug_data(priv->rxcq);
              spin_unlock_bh(&priv->lock);
              return;
           }
-          priv->tx_packet_rcvd_count++;
-          printk("tx_packet_rcvd_count %d\n", priv->tx_packet_rcvd_count);
-         // cq_dump_debug_data(priv->rxcq);
-       //   NTBETHDEBUG("Received dataloc 0x%Lx\n", (unsigned  long long)data);
           priv->rx_pkt_count++;
-        //  NTBETHDEBUG("rxing pkt %d... \n",priv->rx_pkt_count);
           len = *(unsigned int *)data; 
-        //  NTBETHDEBUG("Received length %d\n", len);
 	  skb = dev_alloc_skb(len+2); // to make IP frame 16B aligned 
-         // NTBETHDEBUG("after skb alloc length %d\n", len);
 	  if (!skb) {
 		if (printk_ratelimit())
 			printk(KERN_INFO "ntbeth  rx: low on mem - packet dropped\n");
@@ -269,10 +235,10 @@ void ntbeth_rx_interrupt(void * pref)
           skb->dev = dev;
           skb->ip_summed = CHECKSUM_UNNECESSARY;
           skb_reserve(skb, 2);
-//        DumpMemory(data, len);
-          //NTBETHDEBUG("RxPacket\n");
+          // DumpMemory(data, len);
           ntbeth_copier_copy_to_skb(&priv->copier,data+4, len, skb, rx_copy_callback, skb);
-        } while (data);
+         // dump_info(priv, DEBUG_RX, data, len);
+        } 
         spin_unlock_bh(&priv->lock);
         return;
 }
@@ -284,12 +250,9 @@ void tx_copy_callback(void *pref)
   struct ntbeth_priv *priv = netdev_priv(skb->dev);
   NTBETHDEBUG("tx_copy_callback invoked\n");
   cq_update_put_ptr(priv->txcq); 
-  //cq_dump_debug_data(priv->txcq); 
   // we also need to send interrupt to the remote node
   dev_kfree_skb(skb);
   ntbdev_send_packet_txed_interrupt(&priv->ntbdev);
-  priv->tx_packet_sent_count++;
-//  NTBETHDEBUG("tx_packet_sent_count %d\n", priv->tx_packet_sent_count);
   return;
 }
 
@@ -305,37 +268,53 @@ int ntbeth_tx(struct sk_buff *skb, struct net_device *dev)
         // obtain queue entry in ntb CQ.
         spin_lock_bh(&priv->lock);
         len = skb->len;
-        priv->tx_pkt_count++;
-        priv->stats.tx_packets++;
-        priv->stats.tx_bytes += len;
-        NTBETHDEBUG("txing pkt %d..w/length %d. \n",priv->tx_pkt_count, len);
-        //cq_dump_debug_data(priv->txcq);
         dev->trans_start = jiffies;
-        if(priv->lnkstatus == NTBETH_STATUS_LINKDOWN)
+
+        // drop the packet if peer status is not  up
+        if(!(priv->peer_status & NTBETH_REMOTE_PEER_UP))
         {
+          NTBETHDEBUG(" packet dropped because remote peer is down: peer status 0x%x\n", priv->peer_status);
           dev_kfree_skb(skb);
           spin_unlock_bh(&priv->lock);
           return 0;
         }
-        
+#if 1
+        if(turnoff_tx)
+        {
+          if(priv->tx_pkt_count == turnoff_pkt_count)
+          {
+           dev_kfree_skb(skb);
+           spin_unlock_bh(&priv->lock);
+           return 0;
+          }
+        }
+#endif 
+        if(is_cq_full(priv->txcq))
+        {
+          NTBETHDEBUG(" packet dropped because remote cq is full 0x%x\n", priv->peer_status);
+          ntbdev_send_packet_txed_interrupt(&priv->ntbdev);
+          dev_kfree_skb(skb);
+          spin_unlock_bh(&priv->lock);
+          return 0;
+        }
         data = cq_get_current_put_entry_loc(priv->txcq);
         if(data == NULL)
         {
-          printk(KERN_INFO "cq is full\n");
+          printk(KERN_INFO "Something wrong cq is full\n");
           // no need to release skb
           // notify kernel that it should stop queue
-           
-          netif_stop_queue(dev);
-          NTBETHDEBUG("halted queue \n");
-          priv->txq_status = NTBETH_Q_FULL; //flag to track queing status
           // just send one more remainder of availability of packets in the queue 
           ntbdev_send_packet_txed_interrupt(&priv->ntbdev);
+          dev_kfree_skb(skb);
           spin_unlock_bh(&priv->lock);
-          return 1;
+          return 0;
         }
+        priv->tx_pkt_count++;
+        priv->stats.tx_packets++;
+        priv->stats.tx_bytes += len;
         *(unsigned int *)data = len; 
         ntbeth_copier_copy_from_skb(&priv->copier,skb,data+4, len, tx_copy_callback, skb);
-    //    DumpMemory(skb->data, len);
+        //dump_info(priv, DEBUG_TX, data, len); 
         spin_unlock_bh(&priv->lock);
         return 0; 
 }
@@ -382,11 +361,12 @@ int ntbeth_init(struct net_device *dev)
 	
 	/* Set up some of the private variables now */
 	memset(priv, 0, sizeof(struct ntbeth_priv));
+        NTBETHDEBUG("private ptr: 0x%Lx\n", (unsigned long long)priv);
 	priv->status = 0;
 	spin_lock_init(&priv->lock);
 	netif_stop_queue(dev);
-        priv->lnkstatus = NTBETH_STATUS_LINKDOWN;
-	
+        update_peer_status(dev,NTBETH_LOCAL_PEER_DOWN);
+        update_peer_status(dev,NTBETH_REMOTE_PEER_DOWN);
 	dev->mtu		= NTBETH_MAX_MTUSIZE;
 	dev->flags		|= IFF_NOARP;
 //	dev->features		|= NETIF_F_NO_CSUM | NETIF_F_SG;
@@ -401,14 +381,19 @@ int ntbeth_init(struct net_device *dev)
         {
           return (err);
         }
-        // Initialize CQ to send message to remote side
-        priv->txcq = ntbdev_get_bar23_local_memory(&priv->ntbdev);
-        init_cq(priv->txcq, cq_calculate_num_entries(bar23_size)); 
+        // Initialize CQ to recv message from remote side
+        priv->rxcq = ntbdev_get_bar23_local_memory(&priv->ntbdev);
+        priv->txcq = ntbdev_get_bar23_value(&priv->ntbdev);
+        init_cq(priv->rxcq, cq_calculate_num_entries(bar23_size),NTBETH_RX_CQ,ntbdev_get_bar23_value(&priv->ntbdev)); 
         // obtain rxcq  ptr
-        priv->rxcq = ntbdev_get_bar23_value(&priv->ntbdev);
         NTBETHDEBUG("RxCQ Ptr 0x%Lx\n", (unsigned long long)priv->rxcq);
+        NTBETHDEBUG("TxCQ Ptr 0x%Lx\n", (unsigned long long)priv->txcq);
         NTBETHDEBUG("bar23size 0x%Lx\n", (unsigned long long)bar23_size);
         NTBETHDEBUG("bar45size 0x%Lx\n", (unsigned long long)bar45_size);
+        cq_dump_debug_data(priv->rxcq,"INIT: ");
+        cq_dump_debug_data(priv->txcq,"INIT: ");
+        NTBETHDEBUG("tx_pkt_count %d\n", priv->tx_pkt_count);
+        NTBETHDEBUG("rx_pkt_count %d\n", priv->rx_pkt_count);
 
         return 0;
 }
@@ -421,46 +406,17 @@ int ntbeth_set_mac_address(struct net_device *netdev, void *p)
         return 0;
 }
 
-void DumpMemory(char *memoryloc, int size)
+void DumpMemory(char *memoryloc, int size, char *fmtstr)
 {
   unsigned int *pBuf = (unsigned int *)memoryloc;
   int i;
   for(i=0; i < size/4; i++)
   {
-  if (i%4 == 0) NTBETHDEBUG("\n0x%02x: ",i*4);
-    NTBETHDEBUG("0x%08x ", pBuf[i]);
+  if (i%4 == 0) printk("\n%s0x%02x: ",fmtstr,i*4);
+    printk("%s0x%08x ",fmtstr, pBuf[i]);
   }
   return;
 }
-
-void ntbeth_decide_traffic_on_off(struct net_device *pdev)
-{
-  struct ntbeth_priv *priv = netdev_priv(pdev);
-
-  if(priv->txq_status == NTBETH_Q_FULL) 
-  return;
-
-  if((priv->local_drv_if_status == DRVRIF_UP) && (priv->remote_drv_if_status == DRVRIF_UP))
-  {
-    if(priv->lnkstatus == NTBETH_STATUS_LINKDOWN)
-    {
-     priv->lnkstatus = NTBETH_STATUS_LINKUP;  
-     netif_wake_queue(pdev);
-     NTBETHDEBUG("Link is Up now\n");
-    }
-  } 
-  else
-  {
-    if(priv->lnkstatus == NTBETH_STATUS_LINKUP)
-    {
-     priv->lnkstatus = NTBETH_STATUS_LINKDOWN;  
-     netif_stop_queue(pdev);
-     NTBETHDEBUG("Link is Down now\n");
-    }
-  }
-  return;
-}
-
 void ntbeth_cleanup(void)
 {
 	unregister_netdev(ntbeth_device->netdev);
@@ -480,6 +436,7 @@ int ntbeth_init_module(void)
                         printk(KERN_ERR "Etherdev alloc failed, abort.\n");
                 return -ENOMEM;
         }
+        NTBETHDEBUG("netdev ptr 0x%Lx\n", (unsigned long long)netdev);
         netdev->netdev_ops = &ntbeth_netdev_ops;
         netdev->get_stats = ntbeth_stats;
         netdev->watchdog_timeo = NTBETH_WATCHDOG_PERIOD;
@@ -505,6 +462,50 @@ int ntbeth_init_module(void)
         NTBETHDEBUG(" ntbeth_init_module completed successfully\n");
         NTBETHDEBUG( "ntbeth_init_module completed successfully\n");
 	return 0;
+}
+
+void update_peer_status(struct net_device *netdev, int peer_status)
+{
+   struct ntbeth_priv *priv = netdev_priv(netdev);
+   spin_lock_bh(&priv->lock);
+   // clear link status 
+    switch(peer_status)
+    {
+      case NTBETH_REMOTE_PEER_UP: 
+      case NTBETH_REMOTE_PEER_DOWN: 
+      priv->peer_status = (~NTBETH_REMOTE_MASK & priv->peer_status)|peer_status;
+      break;
+      case NTBETH_LOCAL_PEER_UP: 
+      case NTBETH_LOCAL_PEER_DOWN: 
+      priv->peer_status = (~NTBETH_LOCAL_MASK & priv->peer_status)|peer_status;
+      break;
+    }
+   if(((priv->peer_status &  NTBETH_LOCAL_MASK) == NTBETH_LOCAL_PEER_UP) && ((priv->peer_status & NTBETH_REMOTE_MASK) == NTBETH_REMOTE_PEER_UP))
+   {
+        NTBETHDEBUG("ntbeth: update_peer_status  both sides are up\n");
+     netif_wake_queue(netdev);
+   }
+   else
+   {
+        NTBETHDEBUG("ntbeth: update_peer_status  at least one side is down\n");
+     netif_stop_queue(netdev);
+   }
+   spin_unlock_bh(&priv->lock);
+}
+
+void dump_info(struct ntbeth_priv *priv, int side, void *pkt, int len)
+{
+  switch(side)
+  {
+       case DEBUG_RX:
+       printk("\t\t\t\t\tRxed Pkt xCount %d w/len %d\n", priv->rx_pkt_count,len);
+       cq_dump_debug_data(priv->rxcq, "\t\t\t\t\t");
+	break;
+       case DEBUG_TX:
+       printk("Txed Pkt Count %d w/len %d\n", priv->tx_pkt_count, len);
+       cq_dump_debug_data(priv->txcq, " ");
+	break;
+  }
 }
 
 module_init(ntbeth_init_module);
