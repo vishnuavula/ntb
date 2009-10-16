@@ -497,7 +497,6 @@ int ntbeth_init_module(void)
 	}
 	NTBETHDEBUG("netdev ptr 0x%Lx\n", (unsigned long long)netdev);
 	netdev->netdev_ops = &ntbeth_netdev_ops;
-	netdev->get_stats = ntbeth_stats;
 	netdev->watchdog_timeo = NTBETH_WATCHDOG_PERIOD;
 	strncpy(netdev->name, "ntb1",5);
 	if ((err = register_netdev(netdev))) {
