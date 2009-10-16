@@ -69,6 +69,8 @@ struct ntbeth_priv
         //int tx_packet_ack_rcvd_count;
         int tx_timeout_count;
         int rx_dropped;
+        dma_addr_t *rx_dma_addresses;
+        dma_addr_t *tx_dma_addresses;
 };
 
 int ntbeth_open(struct net_device *dev);
@@ -86,8 +88,9 @@ int ntbeth_init(struct net_device *dev);
 void ntbeth_ping_interrupt(void * pref);
 void ntbeth_ping_ack_interrupt(void * pref);
 void ntbeth_decide_traffic_on_off(struct net_device *pdev);
-void DumpMemory(char *memoryloc, int size, char *fmtstr);
+void dump_memory(char *memoryloc, int size, char *fmtstr);
 void update_peer_status(struct net_device *netdev, int peer_status);
 void dump_info(struct ntbeth_priv *priv, int side, void *pkt, int len);
+struct net_device_stats *ntbeth_stats(struct net_device *dev);
 
 #endif 
