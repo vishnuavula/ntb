@@ -48,6 +48,7 @@ struct ntbeth_ntb_bar_client_info
  void *local_memory_virt_addr;
  dma_addr_t local_memory_dma_addr;
  struct ntb_client_data client_data;
+ dma_addr_t bar_pci_address;
 };
 
 // structure that maintains relational information between NTB API and NTBETH Driver. It also maintains some statistics counters that are used for debugging.
@@ -121,5 +122,8 @@ void ntbdev_send_close_interrupt(struct ntbeth_ntbdev *pdev);
 void ntbdev_unmask_doorbell_interrupts(struct ntbeth_ntbdev *pdev);
 void ntbdev_mask_doorbell_interrupts(struct ntbeth_ntbdev *pdev);
 void ntbdev_send_doorbell(struct ntbeth_ntbdev *pdev, unsigned short doorbell_value);
+int ntbdev_get_bus_address_for_local_buffers(struct ntbeth_ntbdev *pdev, void *virt_addr, int size, dma_addr_t *bus_address);
+int ntbdev_get_bus_address_for_remote_buffers(struct ntbeth_ntbdev *pdev, void *virt_addr, int size, dma_addr_t *bus_address);
+
 
 #endif 

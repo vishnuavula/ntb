@@ -82,6 +82,11 @@ int ntbdev_init(struct ntbeth_ntbdev *pdev, int bar23_size, int bar45_size, int 
  gntbdev = pdev; // remember pointer to ntbdev here because in NTB callbacks we do not have a facility to get the context back. Thus we use global variable 
   // obtain handle to the ntb api functions
   ntb_get_api(&pdev->funcs);
+  if(pdev->funcs.ntb_get_number_devices() < 1)
+  {
+    printk("ERROR: NO NTB-NTB DEVICES found\n");
+    return (NTBETH_FAIL);
+  }
 
   // obtain ntb device structure
   pdev->ntbdevice = pdev->funcs.ntb_get_device(PROC_0);
@@ -92,12 +97,15 @@ int ntbdev_init(struct ntbeth_ntbdev *pdev, int bar23_size, int bar45_size, int 
   {
       return (NTBETH_FAIL);
   }
+   pdev->barinfo[NTBETH_BAR23INFO_INDEX].bar_pci_address =  pdev->funcs.ntb_get_bar_address(pdev->barinfo[NTBETH_BAR23INFO_INDEX].handle, NTB_BAR_23);
+
   // register for Bar45
   pdev->barinfo[NTBETH_BAR45INFO_INDEX].handle = pdev->funcs.ntb_register_client(NTB_BAR_45, ntbeth_bar45_callback,PROC_0,NULL); 
   if(pdev->barinfo[NTBETH_BAR45INFO_INDEX].handle == -EPERM)
   {
       return (NTBETH_FAIL);
   }
+   pdev->barinfo[NTBETH_BAR45INFO_INDEX].bar_pci_address =  pdev->funcs.ntb_get_bar_address(pdev->barinfo[NTBETH_BAR45INFO_INDEX].handle, NTB_BAR_45);
   
   // Allocate memory and program  Sec Bar 23 Xlate register
 
@@ -380,4 +388,60 @@ void ntbdev_unmask_doorbell_interrupts(struct ntbeth_ntbdev *pdev)
 {
   *(unsigned short *)((char *)pdev->ntbdevice->mm_regs + 0x62 ) = 0x0;
   printk("read door bell mask value 0x%x\n", *(unsigned short *)((char *)pdev->ntbdevice->mm_regs + 0x62 )); ;
+}
+int ntbdev_get_bus_address_for_local_buffers(struct ntbeth_ntbdev *pdev, void *virt_addr, int size, dma_addr_t *bus_address)
+{
+  unsigned long offset;
+    if(((unsigned long long)pdev->barinfo[NTBETH_BAR23INFO_INDEX].local_memory_virt_addr <= (unsigned long long)virt_addr) && ((pdev->barinfo[NTBETH_BAR23INFO_INDEX].bar_size + (char *) pdev->barinfo[NTBETH_BAR23INFO_INDEX].local_memory_virt_addr) > (char *)virt_addr))    
+   {
+    // given virt address is with in the range of bar23
+      offset = virt_addr - pdev->barinfo[NTBETH_BAR23INFO_INDEX].local_memory_virt_addr; 
+      *bus_address =  (dma_addr_t)((char *)pdev->barinfo[NTBETH_BAR23INFO_INDEX].local_memory_dma_addr + offset); 
+   }
+   else
+   {
+      if(((unsigned long long)pdev->barinfo[NTBETH_BAR45INFO_INDEX].local_memory_virt_addr <= (unsigned long long)virt_addr) && ((pdev->barinfo[NTBETH_BAR45INFO_INDEX].bar_size + (char *) pdev->barinfo[NTBETH_BAR45INFO_INDEX].local_memory_virt_addr) > (char *)virt_addr))    
+     {
+      // given virt address is with in the range of bar23
+        offset = virt_addr - pdev->barinfo[NTBETH_BAR23INFO_INDEX].local_memory_virt_addr; 
+        *bus_address =  (dma_addr_t)((char *)pdev->barinfo[NTBETH_BAR45INFO_INDEX].local_memory_dma_addr + offset); 
+     }
+   else
+    {
+        // neither bar23 nor bar45 address
+     NTBETHDEBUG(" FAILED to get  Bus Address for local memory 0x%Lx\n", (unsigned long long)*bus_address);
+         return (NTBETH_FAIL);
+      }
+   }
+     NTBETHDEBUG(" Bus Address for local buffers 0x%Lx\n", (unsigned long long)*bus_address);
+   return (NTBETH_SUCCESS);
+}
+
+// This routine needs to be modified for the alignment
+int ntbdev_get_bus_address_for_remote_buffers(struct ntbeth_ntbdev *pdev, void *virt_addr, int size, dma_addr_t *bus_address)
+{
+  unsigned long offset;
+    if(((unsigned long long)pdev->ntbdevice->pci_bar_23_virt <= (unsigned long long)virt_addr) && ((pdev->barinfo[NTBETH_BAR23INFO_INDEX].bar_size + (char *) pdev->ntbdevice->pci_bar_23_virt) > (char *)virt_addr))    
+   {
+    // given virt address is with in the range of bar23
+      offset = virt_addr - pdev->ntbdevice->pci_bar_23_virt; 
+      *bus_address =  (dma_addr_t)((char *)pdev->barinfo[NTBETH_BAR23INFO_INDEX].bar_pci_address + offset); 
+   }
+   else
+   {
+    if(((unsigned long long)pdev->ntbdevice->pci_bar_45_virt <= (unsigned long long)virt_addr) && ((pdev->barinfo[NTBETH_BAR45INFO_INDEX].bar_size + (char *) pdev->ntbdevice->pci_bar_45_virt) > (char *)virt_addr))    
+      {
+         // given virt address is with in the range of the bar45
+      offset = virt_addr - pdev->ntbdevice->pci_bar_45_virt; 
+      *bus_address = (dma_addr_t) ((char *)pdev->barinfo[NTBETH_BAR45INFO_INDEX].bar_pci_address + offset); 
+      }
+      else
+      {
+        // neither bar23 nor bar45 address
+     NTBETHDEBUG(" FAILED to get  Bus Address for remote memory 0x%Lx\n", (unsigned long long)*bus_address);
+         return (NTBETH_FAIL);
+      }
+   }
+     NTBETHDEBUG(" Bus Address for remote buffers 0x%Lx\n", (unsigned long long)*bus_address);
+   return (NTBETH_SUCCESS);
 }
