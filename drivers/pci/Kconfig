@@ -87,3 +87,5 @@ config PCI_IOAPIC
 	depends on ACPI
 	depends on HOTPLUG
 	default y
+
+source "drivers/pci/ntb/Kconfig"

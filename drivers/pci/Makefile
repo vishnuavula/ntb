@@ -68,4 +68,7 @@ obj-$(CONFIG_PCI_STUB) += pci-stub.o
 
 obj-$(CONFIG_XEN_PCIDEV_FRONTEND) += xen-pcifront.o
 
+# Non-transparent bridge driver
+obj-$(CONFIG_NTB) += ntb/
+
 ccflags-$(CONFIG_PCI_DEBUG) := -DDEBUG
