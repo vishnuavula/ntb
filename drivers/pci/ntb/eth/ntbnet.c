@@ -508,5 +508,6 @@ void dump_info(struct ntbeth_priv *priv, int side, void *pkt, int len)
   }
 }
 
+MODULE_LICENSE("GPL");
 module_init(ntbeth_init_module);
 module_exit(ntbeth_cleanup);
