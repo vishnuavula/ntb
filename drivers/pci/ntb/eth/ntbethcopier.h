@@ -52,8 +52,7 @@
  * POSSIBILITY OF SUCH DAMAGE.
  */
 
-/* This program implements network driver over NTB hardware.*/
-
+/* This file implements network driver over NTB PCIE-LINK */
 #ifndef NTBETHCOPIER_H
 #define NTBETHCOPIER_H
 
@@ -84,20 +83,17 @@ struct ntbeth_copier_info
 {
 // This field is used only if CB3 DMA engine is used to do the memcpy transfers.
 	struct dma_chan * chan;
-        int use_cb3_dma_engine;
+	int use_cb3_dma_engine;
 // debug pkt info
-       unsigned int dbgpkt_len;
-       unsigned int dbgpkt_counter;
-       struct ntbeth_ntbdev *ntbdev;
+	unsigned int dbgpkt_len;
+	unsigned int dbgpkt_counter;
+	struct ntbeth_ntbdev *ntbdev;
 };
 
 int ntbeth_copier_init(struct ntbeth_copier_info *pcopier, int usecb3, struct ntbeth_ntbdev *ntb_dev);
-//int ntbeth_copier_copy_to_skb(struct ntbeth_copier_info *pcoiper, char *pmsg, int length, struct sk_buff *skb, void (*pcallback)(void *), void *pref);
-int ntbeth_ntb_doorbell_enable(struct ntbeth_copier_info *pcopier);
 int ntbeth_copier_cleanup(struct ntbeth_copier_info *pcopier);
-//int ntbeth_copier_copy_from_skb(struct ntbeth_copier_info *pcopier, struct sk_buff *skb, char *pmsg, int length, void (*pcallback)(void *), void *pref);
 void ntbeth_copier_memcpy(char *dest, char *src, int length);
 int ntbeth_copier_copy_from_skb(struct ntbeth_copier_info *pcopier, struct sk_buff *skb, dma_addr_t *dma_addr,char *pmsg, int length, void (*pcallback)(void *), void *pref);
 int ntbeth_copier_copy_to_skb(struct ntbeth_copier_info *pcopier, char *pmsg, int length, struct sk_buff *skb, dma_addr_t *dma_addr, void (*pcallback)(void *), void *pref);
 
-#endif 
+#endif
