@@ -545,7 +545,7 @@ static void unplug_slaves(mddev_t *mddev)
 
 static void raid1_unplug(struct request_queue *q)
 {
-	mddev_t *mddev = q->queuedata;
+	mddev_t *mddev = md_queuedata(q);
 
 	unplug_slaves(mddev);
 	md_wakeup_thread(mddev->thread);

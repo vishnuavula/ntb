@@ -132,7 +132,7 @@ static void unplug_slaves(mddev_t *mddev)
 
 static void multipath_unplug(struct request_queue *q)
 {
-	unplug_slaves(q->queuedata);
+	unplug_slaves(md_queuedata(q));
 }
 
 

@@ -348,8 +348,20 @@ struct mddev_s
 	atomic_t flush_pending;
 	struct work_struct flush_work;
 	struct work_struct event_work;	/* used by dm to report failure event */
+	make_request_fn			*bbu_make_request; /* write-back cache make_request_fn,
+							    * established by the personality
+							    */
+	void				*mddev_data; /* data for intervening caching agent, and an
+						      * anchor to recover mddev
+						      */
 };
 
+static inline void *md_queuedata(struct request_queue *q)
+{
+	void **d = q->queuedata;
+
+	return container_of(d, mddev_t, mddev_data);
+}
 
 static inline void rdev_dec_pending(mdk_rdev_t *rdev, mddev_t *mddev)
 {

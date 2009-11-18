@@ -3733,7 +3733,7 @@ static int raid5_mergeable_bvec(struct request_queue *q,
 				struct bvec_merge_data *bvm,
 				struct bio_vec *biovec)
 {
-	mddev_t *mddev = q->queuedata;
+	mddev_t *mddev = md_queuedata(q);
 	sector_t sector = bvm->bi_sector + get_start_sect(bvm->bi_bdev);
 	int max;
 	unsigned int chunk_sectors = mddev->chunk_sectors;

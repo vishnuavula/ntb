@@ -317,7 +317,10 @@ static int md_make_request(struct request_queue *q, struct bio *bio)
 	 * go away inside make_request
 	 */
 	sectors = bio_sectors(bio);
-	rv = mddev->pers->make_request(mddev, bio);
+	if (mddev->bbu_make_request)
+		rv = mddev->pers->make_request(mddev, bio);
+	else
+		rv = mddev->pers->make_request(mddev, bio);
 
 	cpu = part_stat_lock();
 	part_stat_inc(cpu, &mddev->gendisk->part0, ios[rw]);
@@ -4314,7 +4317,11 @@ static int md_alloc(dev_t dev, char *name)
 	mddev->queue = blk_alloc_queue(GFP_KERNEL);
 	if (!mddev->queue)
 		goto abort;
-	mddev->queue->queuedata = mddev;
+
+	/* frontend caching agent (bbu) can store its private data in
+	 * *(q->queuedata)
+	 */
+	mddev->queue->queuedata = &mddev->mddev_data;
 
 	blk_queue_make_request(mddev->queue, md_make_request);
 
