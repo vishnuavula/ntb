@@ -131,13 +131,13 @@ static void unplug_slaves(mddev_t *mddev)
 
 static void multipath_unplug(struct request_queue *q)
 {
-	unplug_slaves(q->queuedata);
+	unplug_slaves(md_queuedata(q));
 }
 
 
 static int multipath_make_request (struct request_queue *q, struct bio * bio)
 {
-	mddev_t *mddev = q->queuedata;
+	mddev_t *mddev = md_queuedata(q);
 	multipath_conf_t *conf = mddev->private;
 	struct multipath_bh * mp_bh;
 	struct multipath_info *multipath;

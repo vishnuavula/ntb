@@ -62,7 +62,7 @@ static int linear_mergeable_bvec(struct request_queue *q,
 				 struct bvec_merge_data *bvm,
 				 struct bio_vec *biovec)
 {
-	mddev_t *mddev = q->queuedata;
+	mddev_t *mddev = md_queuedata(q);
 	dev_info_t *dev0;
 	unsigned long maxsectors, bio_sectors = bvm->bi_size >> 9;
 	sector_t sector = bvm->bi_sector + get_start_sect(bvm->bi_bdev);
@@ -88,7 +88,7 @@ static int linear_mergeable_bvec(struct request_queue *q,
 
 static void linear_unplug(struct request_queue *q)
 {
-	mddev_t *mddev = q->queuedata;
+	mddev_t *mddev = md_queuedata(q);
 	linear_conf_t *conf;
 	int i;
 
@@ -283,7 +283,7 @@ static int linear_stop (mddev_t *mddev)
 static int linear_make_request (struct request_queue *q, struct bio *bio)
 {
 	const int rw = bio_data_dir(bio);
-	mddev_t *mddev = q->queuedata;
+	mddev_t *mddev = md_queuedata(q);
 	dev_info_t *tmp_dev;
 	sector_t start_sector;
 	int cpu;

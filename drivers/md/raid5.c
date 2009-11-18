@@ -3518,7 +3518,7 @@ static void unplug_slaves(mddev_t *mddev)
 
 static void raid5_unplug_device(struct request_queue *q)
 {
-	mddev_t *mddev = q->queuedata;
+	mddev_t *mddev = md_queuedata(q);
 	raid5_conf_t *conf = mddev->private;
 	unsigned long flags;
 
@@ -3560,7 +3560,7 @@ static int raid5_mergeable_bvec(struct request_queue *q,
 				struct bvec_merge_data *bvm,
 				struct bio_vec *biovec)
 {
-	mddev_t *mddev = q->queuedata;
+	mddev_t *mddev = md_queuedata(q);
 	sector_t sector = bvm->bi_sector + get_start_sect(bvm->bi_bdev);
 	int max;
 	unsigned int chunk_sectors = mddev->chunk_sectors;
@@ -3650,7 +3650,7 @@ static void raid5_align_endio(struct bio *bi, int error)
 
 	bio_put(bi);
 
-	mddev = raid_bi->bi_bdev->bd_disk->queue->queuedata;
+	mddev = md_queuedata(raid_bi->bi_bdev->bd_disk->queue);
 	conf = mddev->private;
 	rdev = (void*)raid_bi->bi_next;
 	raid_bi->bi_next = NULL;
@@ -3692,7 +3692,7 @@ static int bio_fits_rdev(struct bio *bi)
 
 static int chunk_aligned_read(struct request_queue *q, struct bio * raid_bio)
 {
-	mddev_t *mddev = q->queuedata;
+	mddev_t *mddev = md_queuedata(q);
 	raid5_conf_t *conf = mddev->private;
 	unsigned int dd_idx;
 	struct bio* align_bi;
@@ -3809,7 +3809,7 @@ static struct stripe_head *__get_priority_stripe(raid5_conf_t *conf)
 
 static int make_request(struct request_queue *q, struct bio * bi)
 {
-	mddev_t *mddev = q->queuedata;
+	mddev_t *mddev = md_queuedata(q);
 	raid5_conf_t *conf = mddev->private;
 	int dd_idx;
 	sector_t new_sector;

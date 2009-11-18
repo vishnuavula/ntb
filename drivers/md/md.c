@@ -210,7 +210,7 @@ static DEFINE_SPINLOCK(all_mddevs_lock);
  */
 static int md_make_request(struct request_queue *q, struct bio *bio)
 {
-	mddev_t *mddev = q->queuedata;
+	mddev_t *mddev = md_queuedata(q);
 	int rv;
 	if (mddev == NULL || mddev->pers == NULL) {
 		bio_io_error(bio);
@@ -232,7 +232,10 @@ static int md_make_request(struct request_queue *q, struct bio *bio)
 	}
 	atomic_inc(&mddev->active_io);
 	rcu_read_unlock();
-	rv = mddev->pers->make_request(q, bio);
+	if (mddev->bbu_make_request)
+		rv = mddev->bbu_make_request(q, bio);
+	else
+		rv = mddev->pers->make_request(q, bio);
 	if (atomic_dec_and_test(&mddev->active_io) && mddev->suspended)
 		wake_up(&mddev->sb_wait);
 
@@ -3917,7 +3920,11 @@ static int md_alloc(dev_t dev, char *name)
 	mddev->queue = blk_alloc_queue(GFP_KERNEL);
 	if (!mddev->queue)
 		goto abort;
-	mddev->queue->queuedata = mddev;
+
+	/* frontend caching agent (bbu) can store its private data in
+	 * *(q->queuedata)
+	 */
+	mddev->queue->queuedata = &mddev->mddev_data;
 
 	/* Can be unlocked because the queue is new: no concurrency */
 	queue_flag_set_unlocked(QUEUE_FLAG_CLUSTER, mddev->queue);
