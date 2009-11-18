@@ -156,6 +156,12 @@ config TEXTSEARCH_BM
 config TEXTSEARCH_FSM
 	tristate
 
+#
+# uuid support is selected if needed
+#
+config UUID
+	boolean
+
 config HAS_IOMEM
 	boolean
 	depends on !NO_IOMEM
