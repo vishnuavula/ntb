@@ -51,6 +51,7 @@
 #include <linux/seq_file.h>
 #include <linux/cpu.h>
 #include <linux/slab.h>
+#include <linux/bbu.h>
 #include "md.h"
 #include "raid5.h"
 #include "raid0.h"
@@ -4827,6 +4828,8 @@ static raid5_conf_t *setup_conf(mddev_t *mddev)
 	int raid_disk, memory, max_disks;
 	mdk_rdev_t *rdev;
 	struct disk_info *disk;
+	struct bbu_device_info info;
+	make_request_fn *mfn;
 
 	if (mddev->new_level != 5
 	    && mddev->new_level != 4
@@ -4895,6 +4898,19 @@ static raid5_conf_t *setup_conf(mddev_t *mddev)
 	if (raid5_alloc_percpu(conf) != 0)
 		goto abort;
 
+	mfn = bbu_register(mddev->uuid, mddev->gendisk, make_request, &info);
+	if (!IS_ERR(mfn)) {
+		pr_info("raid5: registered with battery backed cache\n");
+		mddev->bbu_make_request = mfn;
+	} else if (PTR_ERR(mfn) == -ENODEV) {
+		/* no cache present */
+		mddev->bbu_make_request = NULL;
+	} else {
+		/* cache present, but failed init */
+		pr_err("raid5: failed to initialize bbu cache\n");
+		goto abort;
+	}
+
 	pr_debug("raid456: run(%s) called.\n", mdname(mddev));
 
 	list_for_each_entry(rdev, &mddev->disks, same_set) {
@@ -4916,12 +4932,6 @@ static raid5_conf_t *setup_conf(mddev_t *mddev)
 			conf->fullsync = 1;
 	}
 
-	conf->chunk_sectors = mddev->new_chunk_sectors;
-	conf->level = mddev->new_level;
-	if (conf->level == 6)
-		conf->max_degraded = 2;
-	else
-		conf->max_degraded = 1;
 	conf->algorithm = mddev->new_layout;
 	conf->max_nr_stripes = NR_STRIPES;
 	conf->reshape_progress = mddev->reshape_position;
@@ -5487,6 +5497,13 @@ static int check_reshape(mddev_t *mddev)
 	    mddev->new_layout == mddev->layout &&
 	    mddev->new_chunk_sectors == mddev->chunk_sectors)
 		return 0; /* nothing to do */
+
+	/* TODO: enable support for reshaping in cooperation with a
+	 * caching agent
+	 */
+	if (mddev->bbu_make_request)
+		return -EBUSY;
+
 	if (mddev->bitmap)
 		/* Cannot grow a bitmap yet */
 		return -EBUSY;
