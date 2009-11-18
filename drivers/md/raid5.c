@@ -494,63 +494,6 @@ static void ops_run_io(struct stripe_head *sh, struct stripe_head_state *s)
 	}
 }
 
-static struct dma_async_tx_descriptor *
-async_copy_data(int frombio, struct bio *bio, struct page *page,
-	sector_t sector, struct dma_async_tx_descriptor *tx)
-{
-	struct bio_vec *bvl;
-	struct page *bio_page;
-	int i;
-	int page_offset;
-	struct async_submit_ctl submit;
-	enum async_tx_flags flags = 0;
-
-	if (bio->bi_sector >= sector)
-		page_offset = (signed)(bio->bi_sector - sector) * 512;
-	else
-		page_offset = (signed)(sector - bio->bi_sector) * -512;
-
-	if (frombio)
-		flags |= ASYNC_TX_FENCE;
-	init_async_submit(&submit, flags, tx, NULL, NULL, NULL);
-
-	bio_for_each_segment(bvl, bio, i) {
-		int len = bio_iovec_idx(bio, i)->bv_len;
-		int clen;
-		int b_offset = 0;
-
-		if (page_offset < 0) {
-			b_offset = -page_offset;
-			page_offset += b_offset;
-			len -= b_offset;
-		}
-
-		if (len > 0 && page_offset + len > STRIPE_SIZE)
-			clen = STRIPE_SIZE - page_offset;
-		else
-			clen = len;
-
-		if (clen > 0) {
-			b_offset += bio_iovec_idx(bio, i)->bv_offset;
-			bio_page = bio_iovec_idx(bio, i)->bv_page;
-			if (frombio)
-				tx = async_memcpy(page, bio_page, page_offset,
-						  b_offset, clen, &submit);
-			else
-				tx = async_memcpy(bio_page, page, b_offset,
-						  page_offset, clen, &submit);
-		}
-		/* chain the operations */
-		submit.depend_tx = tx;
-
-		if (clen < len) /* hit end of page */
-			break;
-		page_offset +=  len;
-	}
-
-	return tx;
-}
-
 static void ops_complete_biofill(void *stripe_head_ref)
 {
 	struct stripe_head *sh = stripe_head_ref;
@@ -617,8 +560,8 @@ static void ops_run_biofill(struct stripe_head *sh)
 			spin_unlock_irq(&conf->device_lock);
 			while (rbi && rbi->bi_sector <
 				dev->sector + STRIPE_SECTORS) {
-				tx = async_copy_data(0, rbi, dev->page,
-					dev->sector, tx);
+				tx = async_copy_biodata(0, rbi, dev->page, 0,
+							dev->sector, tx);
 				rbi = r5_next_bio(rbi, dev->sector);
 			}
 		}
@@ -958,8 +901,8 @@ ops_run_biodrain(struct stripe_head *sh, struct dma_async_tx_descriptor *tx)
 
 			while (wbi && wbi->bi_sector <
 				dev->sector + STRIPE_SECTORS) {
-				tx = async_copy_data(1, wbi, dev->page,
-					dev->sector, tx);
+				tx = async_copy_biodata(1, wbi, dev->page, 0,
+							dev->sector, tx);
 				wbi = r5_next_bio(wbi, dev->sector);
 			}
 		}
