@@ -1376,6 +1376,10 @@ bytes respectively. Such letter suffixes can also be entirely omitted.
 			[KNL,ACPI] Mark specific memory as ACPI data.
 			Region of memory to be used, from ss to ss+nn.
 
+	memmap=nn[KMG]!ss[KMG]
+			[KNL,X86_64] Mark specific memory as ADR protected.
+			Region of memory to be used, from ss to ss+nn.
+
 	memmap=nn[KMG]$ss[KMG]
 			[KNL,ACPI] Mark specific memory as reserved.
 			Region of memory to be used, from ss to ss+nn.
