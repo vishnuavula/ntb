@@ -47,6 +47,7 @@
 #include <linux/delay.h>
 #include <linux/raid/md_p.h>
 #include <linux/raid/md_u.h>
+#include <linux/bbu.h>
 #include "md.h"
 #include "bitmap.h"
 
@@ -2725,8 +2726,14 @@ level_store(mddev_t *mddev, const char *buf, size_t len)
 	/* request to change the personality.  Need to ensure:
 	 *  - array is not engaged in resync/recovery/reshape
 	 *  - old personality can be suspended
-	 *  - new personality will access other array.
+	 *  - new personality will access other array
+	 *  - bbu is not active
 	 */
+
+	if (mddev->bbu_make_request) {
+		printk(KERN_WARNING "md: takeover while bbu attached not supported\n");
+		return -EBUSY;
+	}
 
 	if (mddev->sync_thread || mddev->reshape_position != MaxSector)
 		return -EBUSY;
@@ -3140,6 +3147,84 @@ array_state_store(mddev_t *mddev, const char *buf, size_t len)
 }
 static struct md_sysfs_entry md_array_state =
 __ATTR(array_state, S_IRUGO|S_IWUSR, array_state_show, array_state_store);
+
+static ssize_t
+uuid_show(mddev_t *mddev, char *page)
+{
+	uuid_to_string(page, mddev->uuid, 1);
+	return strlen(page);
+}
+
+static ssize_t
+uuid_store(mddev_t *mddev, const char *buf, size_t len)
+{
+	int err;
+
+	if (mddev->pers || mddev->persistent)
+		return -EBUSY;
+
+	err = parse_uuid((int *) mddev->uuid, buf);
+	if (err)
+		return err;
+	return len;
+}
+static struct md_sysfs_entry md_uuid =
+__ATTR(uuid, S_IRUGO|S_IWUSR, uuid_show, uuid_store);
+
+static ssize_t bbu_show(mddev_t *mddev, char *page)
+{
+	if (mddev->bbu_make_request)
+		return sprintf(page, "1\n");
+	else
+		return sprintf(page, "0\n");
+}
+
+static int md_disable_bbu(mddev_t *mddev)
+{
+	int err;
+
+	if (!mddev->bbu_make_request)
+		return 0;
+
+	if (atomic_read(&mddev->openers) > 1) {
+		pr_info("md: %s still in use\n", mdname(mddev));
+		return -EBUSY;
+	}
+
+	/* open coded "suspend-lite", we just need to ensure all
+	 * incoming io is quiesced and that no new transactions hit
+	 * mddev->bbu_make_request while we are unregistering
+	 */
+	BUG_ON(mddev->suspended);
+	mddev->suspended = 1;
+	synchronize_rcu();
+	wait_event(mddev->sb_wait, atomic_read(&mddev->active_io) == 0);
+	mddev->pers->quiesce(mddev, 1);
+
+	err = bbu_unregister(mddev->uuid, mddev->gendisk);
+	if (err == 0)
+		mddev->bbu_make_request = NULL;
+
+	mddev_resume(mddev);
+
+	if (err)
+		pr_info("md: failed to deactivate bbu: %d\n", err);
+
+	return err;
+}
+
+static ssize_t
+bbu_store(mddev_t *mddev, const char *buf, size_t len)
+{
+	int err = -EINVAL;
+
+	if (sysfs_streq(buf, "0"))
+		err = md_disable_bbu(mddev);
+
+	return err ? err : len;
+}
+static struct md_sysfs_entry md_bbu =
+__ATTR(bbu, S_IRUGO|S_IWUSR, bbu_show, bbu_store);
 
 static ssize_t
 null_show(mddev_t *mddev, char *page)
@@ -3766,6 +3851,8 @@ static struct attribute *md_default_attrs[] = {
 	&md_array_state.attr,
 	&md_reshape_position.attr,
 	&md_array_size.attr,
+	&md_uuid.attr,
+	&md_bbu.attr,
 	NULL,
 };
 
