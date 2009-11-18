@@ -172,6 +172,12 @@ config TEXTSEARCH_FSM
 config BTREE
 	boolean
 
+#
+# uuid support is selected if needed
+#
+config UUID
+	boolean
+
 config HAS_IOMEM
 	boolean
 	depends on !NO_IOMEM
