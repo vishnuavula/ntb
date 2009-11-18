@@ -169,19 +169,25 @@ struct bbu_cache_conf {
 	struct list_head handle;
 	struct bio *dirty_merge_bios;
 	wait_queue_head_t wait_for_ent;
+	wait_queue_head_t wait_for_work;
 	wait_queue_head_t wait_for_overlap;
 	wait_queue_head_t wait_for_writeback;
 	int total_ents;
 	int inactive_blocked; /* allow batch freeing of active ents */
 	int barrier_active;
 	spinlock_t cache_lock;
+	struct task_struct *task;
+	#define BBUD_WAKE 0
+	#define BBU_GET_ACTIVE 1
+	#define BBU_GET_FAILED 2
+	unsigned long task_flags;
 	unsigned long data_pfn; /* first page of data */
 	u64 __iomem *desc; /* page_address(region->start_pfn) */
 	enum bbu_cache_state state;
 	struct list_head node;
 	struct bbu_device *parent; /* platform device containing ADR resource */
 	struct bbu_cache_dev *dev; /* sysfs device for this cache */
-	struct block_device *bd; /* backing block device inode */
+	struct block_device *bd; /* backing block device */
 	int region_idx;
 	atomic_t active; /* number of non-idle cache_ents */
 	atomic_t dirty; /* number of dirty ents (idle or otherwise) */
@@ -233,6 +239,8 @@ struct bbu_cache_ent {
 	#define BBU_ENT_DIRTY 0 /* ent dirty */
 	#define BBU_ENT_HANDLE 1 /* ent needs work before going inactive */
 	#define BBU_ENT_WRITEBACK 2 /* writeback in flight */
+	#define BBU_ENT_BIOFILL_RUN 3 /* request to async fill toread bios */
+	#define BBU_ENT_BIODRAIN_RUN 4 /* request to async drain towrite bios */
 	spinlock_t lock;
 	atomic_t count;
 	sector_t sector;
@@ -243,6 +251,12 @@ struct bbu_cache_ent {
 enum bbu_get_flags {
 	BBU_GET_F_RECYCLE_OK = 1 << 0,
 	BBU_GET_F_BLOCK_OK = 1 << 1,
+};
+
+struct live_ent_state {
+	int to_read, to_write, uptodate, dirty, locked, to_fill;
+	int non_overwrite, failed, writeback;
+	int run_biofill, run_biodrain;
 };
 
 static bool is_blk_active(struct bbu_io_ent *blk)
@@ -334,4 +348,21 @@ static inline u64 read_desc(struct bbu_cache_conf *conf, struct bbu_io_ent *blk)
 static inline void write_desc(u64 v, struct bbu_cache_conf *conf, struct bbu_io_ent *blk)
 {
 	writeq(v, conf->desc + (blk->pfn - conf->data_pfn));
+}
+
+/* [ stolen from r5_next_bio ]
+ * bio's attached to a blk for I/O are linked together in bi_sector
+ * order without overlap.  There may be several incoming bio's per blk,
+ * and a single incoming bio could span several blks.  When walking this
+ * list for a particular blk, we must never proceed beyond a bio that
+ * extends past this blk, as the next bio might no longer be valid.
+ * This routine is used to determine the 'next' bio in the list, given
+ * the sector of the current blk
+ */
+static inline struct bio *blk_next_bio(struct bbu_cache_conf *conf,
+				       struct bio *bi, sector_t s)
+{
+	if (bi->bi_sector + bio_sectors(bi) < s + blk_sectors(conf))
+		return bi->bi_next;
+	return NULL;
 }
