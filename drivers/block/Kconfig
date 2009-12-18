@@ -381,6 +381,12 @@ config BLK_DEV_XIP
 	  will prevent RAM block device backing store memory from being
 	  allocated from highmem (only a problem for highmem systems).
 
+config BLK_BBU
+	tristate
+	depends on ADR
+	select UUID
+	select ASYNC_MEMCPY
+
 config CDROM_PKTCDVD
 	tristate "Packet writing on CD/DVD media"
 	depends on !UML
