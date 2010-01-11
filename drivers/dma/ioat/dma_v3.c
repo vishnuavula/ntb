@@ -351,18 +351,66 @@ static void ioat3_cleanup_tasklet(unsigned long data)
 	writew(IOAT_CHANCTRL_RUN, ioat->base.reg_base + IOAT_CHANCTRL_OFFSET);
 }
 
+static void
+dump_pq_desc_err(struct ioat2_dma_chan *ioat, struct ioat_ring_ent *desc, struct ioat_ring_ent *ext);
+
+static void dump_active3(struct ioat2_dma_chan *ioat)
+{
+	struct ioat_chan_common *chan = &ioat->base;
+	int active = ioat2_ring_active(ioat);
+	struct dma_async_tx_descriptor *tx;
+	struct ioat_dma_descriptor *hw;
+	struct ioat_ring_ent *desc;
+	unsigned long phys_complete;
+	int i, stop = 0;
+
+	ioat_cleanup_preamble(chan, &phys_complete);
+
+	dev_err(to_dev(chan), "%s: active: %d phys_complete: %lx\n",
+		__func__, active, phys_complete);
+
+	for (i = 0; i < active; i++) {
+		desc = ioat2_get_ring_ent(ioat, ioat->tail + i);
+		tx = &desc->txd;
+		hw = desc->hw;
+		if (hw->ctl_f.op == IOAT_OP_XOR ||
+		    hw->ctl_f.op == IOAT_OP_XOR_VAL ||
+		    hw->ctl_f.op == IOAT_OP_PQ ||
+		    hw->ctl_f.op == IOAT_OP_PQ_VAL) {
+			struct ioat_ring_ent *ext;
+
+			ext = ioat2_get_ring_ent(ioat, ioat->tail + i + 1);
+			dump_pq_desc_err(ioat, desc, ext);
+			if (desc_has_ext(desc))
+				i++;
+		} else {
+			dump_desc_err(ioat, desc);
+		}
+
+		if (tx->phys == phys_complete)
+			stop = 1;  /* stop next iteration */
+		else if (stop)
+			break;
+	}
+}
+
 static void ioat3_restart_channel(struct ioat2_dma_chan *ioat)
 {
 	struct ioat_chan_common *chan = &ioat->base;
 	unsigned long phys_complete;
-	u32 status;
+	u32 chanerr_int;
+	u32 chanerr;
 
-	status = ioat_chansts(chan);
-	if (is_ioat_active(status) || is_ioat_idle(status))
-		ioat_suspend(chan);
-	while (is_ioat_active(status) || is_ioat_idle(status)) {
-		status = ioat_chansts(chan);
-		cpu_relax();
+	if (ioat2_quiesce(chan, msecs_to_jiffies(100))) {
+		struct pci_dev *pdev = to_pdev(chan);
+
+		dev_err(to_dev(chan), "%s: timeout\n", __func__);
+		dump_active3(ioat);
+		chanerr = readl(chan->reg_base + IOAT_CHANERR_OFFSET);
+		pci_read_config_dword(pdev, IOAT_PCI_CHANERR_INT_OFFSET, &chanerr_int);
+		dev_err(to_dev(chan), "%s: status: %llx error: %x:%x\n",
+			__func__, ioat_chansts(chan), chanerr, chanerr_int);
+		BUG();
 	}
 
 	if (ioat_cleanup_preamble(chan, &phys_complete))
@@ -370,6 +418,8 @@ static void ioat3_restart_channel(struct ioat2_dma_chan *ioat)
 
 	__ioat2_restart_chan(ioat);
 }
+
+static int ioat3_reset_hw(struct ioat_chan_common *chan);
 
 static void ioat3_eh(struct ioat2_dma_chan *ioat)
 {
@@ -422,8 +472,12 @@ static void ioat3_eh(struct ioat2_dma_chan *ioat)
 		BUG();
 	}
 
-	writel(chanerr, chan->reg_base + IOAT_CHANERR_OFFSET);
-	pci_write_config_dword(pdev, IOAT_PCI_CHANERR_INT_OFFSET, chanerr_int);
+	if (ioat3_reset_hw(chan)) {
+		dev_err(to_dev(chan), "%s: reset timeout\n", __func__);
+		BUG();
+	}
+	writeq(chan->completion_dma, chan->reg_base + IOAT_CHANCMP_OFFSET);
+	writew(IOAT_CHANCTRL_RUN, chan->reg_base + IOAT_CHANCTRL_OFFSET);
 
 	/* mark faulting descriptor as complete */
 	*chan->completion = desc->txd.phys;
@@ -696,6 +750,32 @@ dump_pq_desc_dbg(struct ioat2_dma_chan *ioat, struct ioat_ring_ent *desc, struct
 	dev_dbg(dev, "\tP: %#llx\n", pq->p_addr);
 	dev_dbg(dev, "\tQ: %#llx\n", pq->q_addr);
 }
+
+static void
+dump_pq_desc_err(struct ioat2_dma_chan *ioat, struct ioat_ring_ent *desc, struct ioat_ring_ent *ext)
+{
+	struct device *dev = to_dev(&ioat->base);
+	struct ioat_pq_descriptor *pq = desc->pq;
+	struct ioat_pq_ext_descriptor *pq_ex = ext ? ext->pq_ex : NULL;
+	struct ioat_raw_descriptor *descs[] = { (void *) pq, (void *) pq_ex };
+	int src_cnt = src_cnt_to_sw(pq->ctl_f.src_cnt);
+	int i;
+
+	dev_err(dev, "desc[%d]: (%#llx->%#llx) flags: %#x"
+		" sz: %#x ctl: %#x (op: %d int: %d compl: %d pq: '%s%s' src_cnt: %d)\n",
+		desc_id(desc), (unsigned long long) desc->txd.phys,
+		(unsigned long long) (pq_ex ? pq_ex->next : pq->next),
+		desc->txd.flags, pq->size, pq->ctl, pq->ctl_f.op, pq->ctl_f.int_en,
+		pq->ctl_f.compl_write,
+		pq->ctl_f.p_disable ? "" : "p", pq->ctl_f.q_disable ? "" : "q",
+		pq->ctl_f.src_cnt);
+	for (i = 0; i < src_cnt; i++)
+		dev_err(dev, "\tsrc[%d]: %#llx coef: %#x\n", i,
+			(unsigned long long) pq_get_src(descs, i), pq->coef[i]);
+	dev_err(dev, "\tP: %#llx\n", pq->p_addr);
+	dev_err(dev, "\tQ: %#llx\n", pq->q_addr);
+}
+
 
 static struct dma_async_tx_descriptor *
 __ioat3_prep_pq_lock(struct dma_chan *c, enum sum_check_flags *result,
@@ -1237,11 +1317,7 @@ static int ioat3_reset_hw(struct ioat_chan_common *chan)
 	writel(chanerr, chan->reg_base + IOAT_CHANERR_OFFSET);
 
 	/* -= IOAT ver.3 workarounds =- */
-	/* Write CHANERRMSK_INT with 3E07h to mask out the errors
-	 * that can cause stability issues for IOAT ver.3, and clear any
-	 * pending errors
-	 */
-	pci_write_config_dword(pdev, IOAT_PCI_CHANERRMASK_INT_OFFSET, 0x3e07);
+	pci_write_config_dword(pdev, IOAT_PCI_CHANERRMASK_INT_OFFSET, 0);
 	err = pci_read_config_dword(pdev, IOAT_PCI_CHANERR_INT_OFFSET, &chanerr);
 	if (err) {
 		dev_err(&pdev->dev, "channel error register unreachable\n");

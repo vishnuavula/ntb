@@ -149,9 +149,7 @@ struct ioat_ring_ent {
 	size_t len;
 	struct dma_async_tx_descriptor txd;
 	enum sum_check_flags *result;
-	#ifdef DEBUG
 	int id;
-	#endif
 };
 
 static inline struct ioat_ring_ent *

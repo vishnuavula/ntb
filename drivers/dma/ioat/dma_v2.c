@@ -217,7 +217,9 @@ void ioat2_cleanup_tasklet(unsigned long data)
 
 void __ioat2_restart_chan(struct ioat2_dma_chan *ioat)
 {
+	unsigned long end = jiffies + msecs_to_jiffies(100);
 	struct ioat_chan_common *chan = &ioat->base;
+	u64 status;
 
 	/* set the tail to be re-issued */
 	ioat->issued = ioat->tail;
@@ -237,6 +239,21 @@ void __ioat2_restart_chan(struct ioat2_dma_chan *ioat)
 		__ioat2_issue_pending(ioat);
 	} else
 		__ioat2_start_null_desc(ioat);
+
+	do {
+		status = ioat_chansts(chan);
+		if (time_after(jiffies, end)) {
+			struct pci_dev *pdev = to_pdev(chan);
+			u32 chanerr, chanerr_int;
+
+			chanerr = readl(chan->reg_base + IOAT_CHANERR_OFFSET);
+			pci_read_config_dword(pdev, IOAT_PCI_CHANERR_INT_OFFSET, &chanerr_int);
+			dev_err(to_dev(chan), "%s: timeout status: %llx error: %x:%x\n",
+				__func__, status, chanerr, chanerr_int);
+			BUG();
+		}
+		cpu_relax();
+	} while (is_ioat_armed(status));
 }
 
 int ioat2_quiesce(struct ioat_chan_common *chan, unsigned long tmo)
@@ -277,12 +294,48 @@ int ioat2_reset_sync(struct ioat_chan_common *chan, unsigned long tmo)
 	return err;
 }
 
+static void dump_active2(struct ioat2_dma_chan *ioat)
+{
+	struct ioat_chan_common *chan = &ioat->base;
+	int active = ioat2_ring_active(ioat);
+	struct dma_async_tx_descriptor *tx;
+	struct ioat_ring_ent *desc;
+	unsigned long phys_complete;
+	int i, stop = 0;
+
+	ioat_cleanup_preamble(chan, &phys_complete);
+
+	dev_err(to_dev(chan), "%s: active: %d phys_complete: %lx\n",
+		__func__, active, phys_complete);
+
+	for (i = 0; i < active; i++) {
+		dump_desc_err(ioat, desc);
+		if (tx->phys == phys_complete)
+			stop = 1;  /* stop next iteration */
+		else if (stop)
+			break;
+	}
+}
+
+
 static void ioat2_restart_channel(struct ioat2_dma_chan *ioat)
 {
 	struct ioat_chan_common *chan = &ioat->base;
 	unsigned long phys_complete;
+	u32 chanerr, chanerr_int;
 
-	ioat2_quiesce(chan, 0);
+	if (ioat2_quiesce(chan, msecs_to_jiffies(100))) {
+		struct pci_dev *pdev = to_pdev(chan);
+
+		dev_err(to_dev(chan), "%s: timeout\n", __func__);
+		dump_active2(ioat);
+		chanerr = readl(chan->reg_base + IOAT_CHANERR_OFFSET);
+		pci_read_config_dword(pdev, IOAT_PCI_CHANERR_INT_OFFSET, &chanerr_int);
+		dev_err(to_dev(chan), "%s: status: %llx error: %x:%x\n",
+			__func__, ioat_chansts(chan), chanerr, chanerr_int);
+		BUG();
+	}
+
 	if (ioat_cleanup_preamble(chan, &phys_complete))
 		__cleanup(ioat, phys_complete);
 

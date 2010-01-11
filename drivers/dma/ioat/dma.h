@@ -186,18 +186,11 @@ struct ioat_desc_sw {
 	size_t len;
 	struct list_head tx_list;
 	struct dma_async_tx_descriptor txd;
-	#ifdef DEBUG
 	int id;
-	#endif
 };
 
-#ifdef DEBUG
 #define set_desc_id(desc, i) ((desc)->id = (i))
 #define desc_id(desc) ((desc)->id)
-#else
-#define set_desc_id(desc, i)
-#define desc_id(desc) (0)
-#endif
 
 static inline void
 __dump_desc_dbg(struct ioat_chan_common *chan, struct ioat_dma_descriptor *hw,
@@ -212,8 +205,24 @@ __dump_desc_dbg(struct ioat_chan_common *chan, struct ioat_dma_descriptor *hw,
 		hw->ctl, hw->ctl_f.op, hw->ctl_f.int_en, hw->ctl_f.compl_write);
 }
 
+static inline void
+__dump_desc_err(struct ioat_chan_common *chan, struct ioat_dma_descriptor *hw,
+		struct dma_async_tx_descriptor *tx, int id)
+{
+	struct device *dev = to_dev(chan);
+
+	dev_err(dev, "desc[%d]: (%#llx->%#llx) cookie: %d flags: %#x"
+		" ctl: %#x (op: %d int_en: %d compl: %d)\n", id,
+		(unsigned long long) tx->phys,
+		(unsigned long long) hw->next, tx->cookie, tx->flags,
+		hw->ctl, hw->ctl_f.op, hw->ctl_f.int_en, hw->ctl_f.compl_write);
+}
+
 #define dump_desc_dbg(c, d) \
 	({ if (d) __dump_desc_dbg(&c->base, d->hw, &d->txd, desc_id(d)); 0; })
+
+#define dump_desc_err(c, d) \
+	({ if (d) __dump_desc_err(&c->base, d->hw, &d->txd, desc_id(d)); 0; })
 
 static inline void ioat_set_tcp_copy_break(unsigned long copybreak)
 {
@@ -322,11 +331,19 @@ static inline bool is_ioat_armed(unsigned long status)
 
 static inline void ioat_check_armed(struct ioat_chan_common *chan)
 {
+	struct pci_dev *pdev = to_pdev(chan);
 	u64 status = ioat_chansts(chan);
+	u32 chanerr, chanerr_int;
+
+	chanerr = readl(chan->reg_base + IOAT_CHANERR_OFFSET);
+	pci_read_config_dword(pdev, IOAT_PCI_CHANERR_INT_OFFSET, &chanerr_int);
 
 	if (!is_ioat_armed(status) &&
-	    !test_and_set_bit(IOAT_ARM_FAIL, &chan->state))
-		dev_WARN(to_dev(chan), "failed to arm channel\n");
+	    !test_and_set_bit(IOAT_ARM_FAIL, &chan->state)) {
+		dev_err(to_dev(chan), "%s: failed status: %llx error: %x:%x\n",
+			__func__, status, chanerr, chanerr_int);
+		BUG();
+	}
 }
 
 /* channel was fatally programmed */
