@@ -458,7 +458,7 @@ static int raid10_mergeable_bvec(struct request_queue *q,
 				 struct bvec_merge_data *bvm,
 				 struct bio_vec *biovec)
 {
-	mddev_t *mddev = q->queuedata;
+	mddev_t *mddev = md_queuedata(q);
 	sector_t sector = bvm->bi_sector + get_start_sect(bvm->bi_bdev);
 	int max;
 	unsigned int chunk_sectors = mddev->chunk_sectors;
@@ -619,9 +619,9 @@ static void unplug_slaves(mddev_t *mddev)
 
 static void raid10_unplug(struct request_queue *q)
 {
-	mddev_t *mddev = q->queuedata;
+	mddev_t *mddev = md_queuedata(q);
 
-	unplug_slaves(q->queuedata);
+	unplug_slaves(mddev);
 	md_wakeup_thread(mddev->thread);
 }
 
@@ -787,7 +787,7 @@ static void unfreeze_array(conf_t *conf)
 
 static int make_request(struct request_queue *q, struct bio * bio)
 {
-	mddev_t *mddev = q->queuedata;
+	mddev_t *mddev = md_queuedata(q);
 	conf_t *conf = mddev->private;
 	mirror_info_t *mirror;
 	r10bio_t *r10_bio;
