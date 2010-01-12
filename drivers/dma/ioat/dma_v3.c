@@ -400,8 +400,16 @@ static void ioat3_restart_channel(struct ioat2_dma_chan *ioat)
 	unsigned long phys_complete;
 	u32 chanerr_int;
 	u32 chanerr;
+	int rc;
 
-	if (ioat2_quiesce(chan, msecs_to_jiffies(100))) {
+	rc = ioat2_quiesce(chan, msecs_to_jiffies(100));
+	if (rc == -EBUSY) {
+		dev_err(to_dev(chan), "%s: cancelling, channel active\n",
+			__func__);
+		if (ioat_cleanup_preamble(chan, &phys_complete))
+			__cleanup(ioat, phys_complete);
+		return;
+	} else if (rc == -ETIMEDOUT) {
 		struct pci_dev *pdev = to_pdev(chan);
 
 		dev_err(to_dev(chan), "%s: timeout\n", __func__);
@@ -415,6 +423,8 @@ static void ioat3_restart_channel(struct ioat2_dma_chan *ioat)
 
 	if (ioat_cleanup_preamble(chan, &phys_complete))
 		__cleanup(ioat, phys_complete);
+	else
+		dev_err(to_dev(chan), "%s: nothing to clean\n", __func__);
 
 	__ioat2_restart_chan(ioat);
 }

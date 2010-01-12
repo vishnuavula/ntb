@@ -225,6 +225,7 @@ void __ioat2_restart_chan(struct ioat2_dma_chan *ioat)
 	ioat->issued = ioat->tail;
 	ioat->dmacount = 0;
 	set_bit(IOAT_COMPLETION_PENDING, &chan->state);
+	clear_bit(IOAT_COMPLETION_ACK, &chan->state);
 	mod_timer(&chan->timer, jiffies + COMPLETION_TIMEOUT);
 
 	dev_dbg(to_dev(chan),
@@ -260,11 +261,25 @@ int ioat2_quiesce(struct ioat_chan_common *chan, unsigned long tmo)
 {
 	unsigned long end = jiffies + tmo;
 	int err = 0;
-	u32 status;
+	u64 status, last;
 
 	status = ioat_chansts(chan);
-	if (is_ioat_active(status) || is_ioat_idle(status))
+
+	/* poll to see if we are stuck active without progress */
+	last = status;
+	while (is_ioat_active(status) || is_ioat_idle(status)) {
+		if (tmo && time_after(jiffies, end))
+			break;
+		status = ioat_chansts(chan);
+		if (status != last)
+			return -EBUSY;
+	}
+
+	end = jiffies + tmo;
+	if (is_ioat_active(status) || is_ioat_idle(status)) {
+		dev_err(to_dev(chan), "%s: suspend\n", __func__);
 		ioat_suspend(chan);
+	}
 	while (is_ioat_active(status) || is_ioat_idle(status)) {
 		if (tmo && time_after(jiffies, end)) {
 			err = -ETIMEDOUT;
