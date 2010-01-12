@@ -1249,6 +1249,24 @@ config ARCH_MEMORY_PROBE
 
 source "mm/Kconfig"
 
+config ADR
+	bool "Support ADR protected memory"
+	depends on X86_64
+	help
+	  Asynchronous DRAM Refresh is a mechanism to protect a region
+	  of system memory from platform power loss.  RAM is protected
+	  in a fashion similar to the S3 state except that entrance into
+	  this state is:
+	  1/ asynchronous, i.e. no opportunity to save state
+	  2/ does not protect all of memory
+	  3/ it only protects data in the DIMM and data that has safely
+	     reached ADR protected buffers in the platform
+
+	  If you say N the kernel will treat the ADR region like an e820
+	  reserved region.
+
+	  Say Y if unsure
+
 config HIGHPTE
 	bool "Allocate 3rd-level pagetables from highmem"
 	depends on X86_32 && (HIGHMEM4G || HIGHMEM64G)
