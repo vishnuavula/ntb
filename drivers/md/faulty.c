@@ -170,7 +170,7 @@ static void add_sector(conf_t *conf, sector_t start, int mode)
 
 static int make_request(struct request_queue *q, struct bio *bio)
 {
-	mddev_t *mddev = q->queuedata;
+	mddev_t *mddev = md_queuedata(q);
 	conf_t *conf = (conf_t*)mddev->private;
 	int failit = 0;
 
