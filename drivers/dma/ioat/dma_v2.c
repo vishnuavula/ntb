@@ -255,6 +255,7 @@ void __ioat2_restart_chan(struct ioat2_dma_chan *ioat)
 		}
 		cpu_relax();
 	} while (is_ioat_armed(status));
+	clear_bit(IOAT3_EH, &chan->state);
 }
 
 int ioat2_quiesce(struct ioat_chan_common *chan, unsigned long tmo)
@@ -269,7 +270,7 @@ int ioat2_quiesce(struct ioat_chan_common *chan, unsigned long tmo)
 	last = status;
 	while (is_ioat_active(status) || is_ioat_idle(status)) {
 		if (tmo && time_after(jiffies, end))
-			break;
+			return -ETIMEDOUT;
 		status = ioat_chansts(chan);
 		if (status != last)
 			return -EBUSY;
@@ -320,11 +321,17 @@ static void dump_active2(struct ioat2_dma_chan *ioat)
 
 	ioat_cleanup_preamble(chan, &phys_complete);
 
-	dev_err(to_dev(chan), "%s: active: %d phys_complete: %lx\n",
-		__func__, active, phys_complete);
+	dev_err(to_dev(chan), "%s: active: %d phys_complete: %lx state: %#lx\n",
+		__func__, active, phys_complete, chan->state);
+	dev_err(to_dev(chan), "%s: chainaddr: %#lx dmacount: %#x\n",
+		__func__, readq(chan->reg_base + IOAT2_CHAINADDR_OFFSET),
+		readw(chan->reg_base + IOAT_CHAN_DMACOUNT_OFFSET));
 
 	for (i = 0; i < active; i++) {
+		desc = ioat2_get_ring_ent(ioat, ioat->tail + i);
+		tx = &desc->txd;
 		dump_desc_err(ioat, desc);
+
 		if (tx->phys == phys_complete)
 			stop = 1;  /* stop next iteration */
 		else if (stop)
@@ -332,14 +339,22 @@ static void dump_active2(struct ioat2_dma_chan *ioat)
 	}
 }
 
-
 static void ioat2_restart_channel(struct ioat2_dma_chan *ioat)
 {
 	struct ioat_chan_common *chan = &ioat->base;
 	unsigned long phys_complete;
-	u32 chanerr, chanerr_int;
+	u32 chanerr_int;
+	u32 chanerr;
+	int rc;
 
-	if (ioat2_quiesce(chan, msecs_to_jiffies(100))) {
+	rc = ioat2_quiesce(chan, msecs_to_jiffies(5000));
+	if (rc == -EBUSY) {
+		dev_err(to_dev(chan), "%s: cancelling, channel active\n",
+			__func__);
+		if (ioat_cleanup_preamble(chan, &phys_complete))
+			__cleanup(ioat, phys_complete);
+		return;
+	} else if (rc == -ETIMEDOUT) {
 		struct pci_dev *pdev = to_pdev(chan);
 
 		dev_err(to_dev(chan), "%s: timeout\n", __func__);
@@ -353,6 +368,8 @@ static void ioat2_restart_channel(struct ioat2_dma_chan *ioat)
 
 	if (ioat_cleanup_preamble(chan, &phys_complete))
 		__cleanup(ioat, phys_complete);
+	else
+		dev_err(to_dev(chan), "%s: nothing to clean\n", __func__);
 
 	__ioat2_restart_chan(ioat);
 }

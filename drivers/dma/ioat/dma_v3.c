@@ -366,8 +366,11 @@ static void dump_active3(struct ioat2_dma_chan *ioat)
 
 	ioat_cleanup_preamble(chan, &phys_complete);
 
-	dev_err(to_dev(chan), "%s: active: %d phys_complete: %lx\n",
-		__func__, active, phys_complete);
+	dev_err(to_dev(chan), "%s: active: %d phys_complete: %lx state: %#lx\n",
+		__func__, active, phys_complete, chan->state);
+	dev_err(to_dev(chan), "%s: chainaddr: %#lx dmacount: %#x\n",
+		__func__, readq(chan->reg_base + IOAT2_CHAINADDR_OFFSET),
+		readw(chan->reg_base + IOAT_CHAN_DMACOUNT_OFFSET));
 
 	for (i = 0; i < active; i++) {
 		desc = ioat2_get_ring_ent(ioat, ioat->tail + i);
@@ -402,7 +405,7 @@ static void ioat3_restart_channel(struct ioat2_dma_chan *ioat)
 	u32 chanerr;
 	int rc;
 
-	rc = ioat2_quiesce(chan, msecs_to_jiffies(100));
+	rc = ioat2_quiesce(chan, msecs_to_jiffies(5000));
 	if (rc == -EBUSY) {
 		dev_err(to_dev(chan), "%s: cancelling, channel active\n",
 			__func__);
@@ -492,6 +495,7 @@ static void ioat3_eh(struct ioat2_dma_chan *ioat)
 	/* mark faulting descriptor as complete */
 	*chan->completion = desc->txd.phys;
 
+	set_bit(IOAT3_EH, &chan->state);
 	ioat3_restart_channel(ioat);
 }
 
