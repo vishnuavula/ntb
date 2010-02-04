@@ -331,7 +331,7 @@ static void ioat3_cleanup(struct ioat2_dma_chan *ioat)
 
 static void ioat3_cleanup_event(unsigned long data)
 {
-	struct ioat2_dma_chan *ioat = (void *) data;
+	struct ioat2_dma_chan *ioat = to_ioat2_chan((void *) data);
 	struct ioat_chan_common *chan = &ioat->base;
 
 	ioat3_cleanup(ioat);
@@ -352,7 +352,7 @@ static void ioat3_restart_channel(struct ioat2_dma_chan *ioat)
 
 static void ioat3_timer_event(unsigned long data)
 {
-	struct ioat2_dma_chan *ioat = (void *) data;
+	struct ioat2_dma_chan *ioat = to_ioat2_chan((void *) data);
 	struct ioat_chan_common *chan = &ioat->base;
 
 	spin_lock_bh(&chan->cleanup_lock);
@@ -407,20 +407,6 @@ static void ioat3_timer_event(unsigned long data)
 			mod_timer(&chan->timer, jiffies + IDLE_TIMEOUT);
 	}
 	spin_unlock_bh(&chan->cleanup_lock);
-}
-
-static enum dma_status
-ioat3_is_complete(struct dma_chan *c, dma_cookie_t cookie,
-		  dma_cookie_t *done, dma_cookie_t *used)
-{
-	struct ioat2_dma_chan *ioat = to_ioat2_chan(c);
-
-	if (ioat_is_complete(c, cookie, done, used) == DMA_SUCCESS)
-		return DMA_SUCCESS;
-
-	ioat3_cleanup(ioat);
-
-	return ioat_is_complete(c, cookie, done, used);
 }
 
 static struct dma_async_tx_descriptor *
@@ -1180,6 +1166,7 @@ int __devinit ioat3_dma_probe(struct ioatdma_device *device, int dca)
 	dma->device_issue_pending = ioat2_issue_pending;
 	dma->device_alloc_chan_resources = ioat2_alloc_chan_resources;
 	dma->device_free_chan_resources = ioat2_free_chan_resources;
+	dma->device_is_tx_complete = ioat_is_dma_complete;
 
 	dma_cap_set(DMA_INTERRUPT, dma->cap_mask);
 	dma->device_prep_dma_interrupt = ioat3_prep_interrupt_lock;
@@ -1230,11 +1217,9 @@ int __devinit ioat3_dma_probe(struct ioatdma_device *device, int dca)
 
 
 	if (is_raid_device) {
-		dma->device_is_tx_complete = ioat3_is_complete;
 		device->cleanup_fn = ioat3_cleanup_event;
 		device->timer_fn = ioat3_timer_event;
 	} else {
-		dma->device_is_tx_complete = ioat2_is_complete;
 		device->cleanup_fn = ioat2_cleanup_event;
 		device->timer_fn = ioat2_timer_event;
 	}

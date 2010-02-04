@@ -176,8 +176,6 @@ ioat2_dma_prep_memcpy_lock(struct dma_chan *c, dma_addr_t dma_dest,
 void ioat2_issue_pending(struct dma_chan *chan);
 int ioat2_alloc_chan_resources(struct dma_chan *c);
 void ioat2_free_chan_resources(struct dma_chan *c);
-enum dma_status ioat2_is_complete(struct dma_chan *c, dma_cookie_t cookie,
-				  dma_cookie_t *done, dma_cookie_t *used);
 void __ioat2_restart_chan(struct ioat2_dma_chan *ioat);
 bool reshape_ring(struct ioat2_dma_chan *ioat, int order);
 void __ioat2_issue_pending(struct ioat2_dma_chan *ioat);
