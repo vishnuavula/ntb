@@ -158,7 +158,7 @@ static void __cleanup(struct ioat2_dma_chan *ioat, unsigned long phys_complete)
 			seen_current = true;
 	}
 	ioat->tail += i;
-	BUG_ON(!seen_current); /* no active descs have written a completion? */
+	BUG_ON(active && !seen_current); /* no active descs have written a completion? */
 
 	chan->last_completion = phys_complete;
 	if (ioat->head == ioat->tail) {
@@ -199,7 +199,7 @@ static void ioat2_cleanup(struct ioat2_dma_chan *ioat)
 	spin_unlock_bh(&chan->cleanup_lock);
 }
 
-void ioat2_cleanup_tasklet(unsigned long data)
+void ioat2_cleanup_event(unsigned long data)
 {
 	struct ioat2_dma_chan *ioat = (void *) data;
 
@@ -391,7 +391,7 @@ int ioat2_enumerate_channels(struct ioatdma_device *device)
 
 		ioat_init_channel(device, &ioat->base, i,
 				  device->timer_fn,
-				  device->cleanup_tasklet,
+				  device->cleanup_fn,
 				  (unsigned long) ioat);
 		ioat->xfercap_log = xfercap_log;
 		spin_lock_init(&ioat->ring_lock);
@@ -541,7 +541,6 @@ int ioat2_alloc_chan_resources(struct dma_chan *c)
 	ioat->alloc_order = order;
 	spin_unlock_bh(&ioat->ring_lock);
 
-	tasklet_enable(&chan->cleanup_task);
 	ioat2_start_null_desc(ioat);
 
 	return 1 << ioat->alloc_order;
@@ -774,9 +773,9 @@ void ioat2_free_chan_resources(struct dma_chan *c)
 	if (!ioat->ring)
 		return;
 
-	tasklet_disable(&chan->cleanup_task);
+	del_timer_sync(&chan->delayed_intr);
 	del_timer_sync(&chan->timer);
-	device->cleanup_tasklet((unsigned long) ioat);
+	device->cleanup_fn((unsigned long) chan);
 	device->reset_hw(chan);
 
 	spin_lock_bh(&ioat->ring_lock);
@@ -819,7 +818,7 @@ ioat2_is_complete(struct dma_chan *c, dma_cookie_t cookie,
 	if (ioat_is_complete(c, cookie, done, used) == DMA_SUCCESS)
 		return DMA_SUCCESS;
 
-	device->cleanup_tasklet((unsigned long) ioat);
+	device->cleanup_fn((unsigned long) ioat);
 
 	return ioat_is_complete(c, cookie, done, used);
 }
@@ -864,7 +863,7 @@ int __devinit ioat2_dma_probe(struct ioatdma_device *device, int dca)
 
 	device->enumerate_channels = ioat2_enumerate_channels;
 	device->reset_hw = ioat2_reset_hw;
-	device->cleanup_tasklet = ioat2_cleanup_tasklet;
+	device->cleanup_fn = ioat2_cleanup_event;
 	device->timer_fn = ioat2_timer_event;
 	device->self_test = ioat_dma_self_test;
 	dma = &device->common;

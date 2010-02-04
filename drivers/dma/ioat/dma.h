@@ -61,8 +61,8 @@
  * @intr_quirk: interrupt setup quirk (for ioat_v1 devices)
  * @enumerate_channels: hw version specific channel enumeration
  * @reset_hw: hw version specific channel (re)initialization
- * @cleanup_tasklet: select between the v2 and v3 cleanup routines
- * @timer_fn: select between the v2 and v3 timer watchdog routines
+ * @cleanup_fn: hw version specific channel cleanup routines
+ * @timer_fn: hw version specific channel timer watchdog routines
  * @self_test: hardware version specific self test for each supported op type
  *
  * Note: the v3 cleanup routine supports raid operations
@@ -80,7 +80,7 @@ struct ioatdma_device {
 	void (*intr_quirk)(struct ioatdma_device *device);
 	int (*enumerate_channels)(struct ioatdma_device *device);
 	int (*reset_hw)(struct ioat_chan_common *chan);
-	void (*cleanup_tasklet)(unsigned long data);
+	void (*cleanup_fn)(unsigned long data);
 	void (*timer_fn)(unsigned long data);
 	int (*self_test)(struct ioatdma_device *device);
 };
@@ -97,13 +97,13 @@ struct ioat_chan_common {
 	#define IOAT_RESET_PENDING 2
 	#define IOAT_KOBJ_INIT_FAIL 3
 	struct timer_list timer;
+	struct timer_list delayed_intr;
 	#define COMPLETION_TIMEOUT msecs_to_jiffies(100)
 	#define IDLE_TIMEOUT msecs_to_jiffies(2000)
 	#define RESET_DELAY msecs_to_jiffies(100)
 	struct ioatdma_device *device;
 	dma_addr_t completion_dma;
 	u64 *completion;
-	struct tasklet_struct cleanup_task;
 	struct kobject kobj;
 };
 

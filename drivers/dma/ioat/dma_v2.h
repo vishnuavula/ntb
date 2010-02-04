@@ -181,7 +181,7 @@ enum dma_status ioat2_is_complete(struct dma_chan *c, dma_cookie_t cookie,
 void __ioat2_restart_chan(struct ioat2_dma_chan *ioat);
 bool reshape_ring(struct ioat2_dma_chan *ioat, int order);
 void __ioat2_issue_pending(struct ioat2_dma_chan *ioat);
-void ioat2_cleanup_tasklet(unsigned long data);
+void ioat2_cleanup_event(unsigned long data);
 void ioat2_timer_event(unsigned long data);
 int ioat2_quiesce(struct ioat_chan_common *chan, unsigned long tmo);
 int ioat2_reset_sync(struct ioat_chan_common *chan, unsigned long tmo);

@@ -73,7 +73,7 @@ static irqreturn_t ioat_dma_do_interrupt(int irq, void *data)
 	attnstatus = readl(instance->reg_base + IOAT_ATTNSTATUS_OFFSET);
 	for_each_bit(bit, &attnstatus, BITS_PER_LONG) {
 		chan = ioat_chan_by_index(instance, bit);
-		tasklet_schedule(&chan->cleanup_task);
+		mod_timer(&chan->delayed_intr, jiffies);
 	}
 
 	writeb(intrctrl, instance->reg_base + IOAT_INTRCTRL_OFFSET);
@@ -89,18 +89,18 @@ static irqreturn_t ioat_dma_do_interrupt_msix(int irq, void *data)
 {
 	struct ioat_chan_common *chan = data;
 
-	tasklet_schedule(&chan->cleanup_task);
+	mod_timer(&chan->delayed_intr, jiffies);
 
 	return IRQ_HANDLED;
 }
 
-static void ioat1_cleanup_tasklet(unsigned long data);
+static void ioat1_cleanup_event(unsigned long data);
 
 /* common channel initialization */
 void ioat_init_channel(struct ioatdma_device *device,
 		       struct ioat_chan_common *chan, int idx,
 		       void (*timer_fn)(unsigned long),
-		       void (*tasklet)(unsigned long),
+		       void (*cleanup_fn)(unsigned long),
 		       unsigned long ioat)
 {
 	struct dma_device *dma = &device->common;
@@ -114,8 +114,9 @@ void ioat_init_channel(struct ioatdma_device *device,
 	init_timer(&chan->timer);
 	chan->timer.function = timer_fn;
 	chan->timer.data = ioat;
-	tasklet_init(&chan->cleanup_task, tasklet, ioat);
-	tasklet_disable(&chan->cleanup_task);
+	init_timer(&chan->delayed_intr);
+	chan->delayed_intr.function = cleanup_fn;
+	chan->delayed_intr.data = ioat;
 }
 
 static void ioat1_timer_event(unsigned long data);
@@ -157,7 +158,7 @@ static int ioat1_enumerate_channels(struct ioatdma_device *device)
 
 		ioat_init_channel(device, &ioat->base, i,
 				  ioat1_timer_event,
-				  ioat1_cleanup_tasklet,
+				  ioat1_cleanup_event,
 				  (unsigned long) ioat);
 		ioat->xfercap = xfercap;
 		spin_lock_init(&ioat->desc_lock);
@@ -363,7 +364,6 @@ static int ioat1_dma_alloc_chan_resources(struct dma_chan *c)
 	writel(((u64) chan->completion_dma) >> 32,
 	       chan->reg_base + IOAT_CHANCMP_OFFSET_HIGH);
 
-	tasklet_enable(&chan->cleanup_task);
 	ioat1_dma_start_null_desc(ioat);  /* give chain to dma device */
 	dev_dbg(to_dev(chan), "%s: allocated %d descriptors\n",
 		__func__, ioat->desccount);
@@ -388,7 +388,7 @@ static void ioat1_dma_free_chan_resources(struct dma_chan *c)
 	if (ioat->desccount == 0)
 		return;
 
-	tasklet_disable(&chan->cleanup_task);
+	del_timer_sync(&chan->delayed_intr);
 	del_timer_sync(&chan->timer);
 	ioat1_cleanup(ioat);
 
@@ -532,7 +532,7 @@ ioat1_dma_prep_memcpy(struct dma_chan *c, dma_addr_t dma_dest,
 	return &desc->txd;
 }
 
-static void ioat1_cleanup_tasklet(unsigned long data)
+static void ioat1_cleanup_event(unsigned long data)
 {
 	struct ioat_dma_chan *chan = (void *)data;
 
