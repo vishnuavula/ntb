@@ -16,7 +16,7 @@
 #include <linux/random.h>
 #include <linux/wait.h>
 
-static unsigned int test_buf_size = 16384;
+static unsigned int test_buf_size = 8192;
 module_param(test_buf_size, uint, S_IRUGO);
 MODULE_PARM_DESC(test_buf_size, "Size of the memcpy test buffer");
 
