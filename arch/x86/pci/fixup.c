@@ -95,6 +95,22 @@ static void __devinit pci_fixup_piix4_acpi(struct pci_dev *d)
 }
 DECLARE_PCI_FIXUP_HEADER(PCI_VENDOR_ID_INTEL, PCI_DEVICE_ID_INTEL_82371AB_3, pci_fixup_piix4_acpi);
 
+static void __devinit pci_fixup_jf_pq_prefetch(struct pci_dev *d)
+{
+	u32 val;
+
+	/*
+	 * PQ operation is enhanced by disabling prefetch
+	 */
+	pci_read_config_dword(d, 0x98, &val);
+	if ((val & (1 << 21)) == 0) {
+		val |= 1 << 21;
+		pci_write_config_dword(d, 0x98, val);
+		dev_info(&d->dev, "Setting PQ prefetch disable\n");
+	}
+}
+DECLARE_PCI_FIXUP_HEADER(PCI_VENDOR_ID_INTEL, 0x3728, pci_fixup_jf_pq_prefetch);
+
 /*
  * Addresses issues with problems in the memory write queue timer in
  * certain VIA Northbridges.  This bugfix is per VIA's specifications,
