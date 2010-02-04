@@ -51,6 +51,8 @@ extern int ioat_ring_alloc_order;
  * @alloc_order: log2 of the number of allocated descriptors
  * @ring: software ring buffer implementation of hardware ring
  * @ring_lock: protects ring attributes
+ * @valcount: number of pending validate operations (ioat3.2+ only)
+ * @poll_work: poll for validate operation completion (ioat3.2+ only)
  */
 struct ioat2_dma_chan {
 	struct ioat_chan_common base;
@@ -62,6 +64,8 @@ struct ioat2_dma_chan {
 	u16 alloc_order;
 	struct ioat_ring_ent **ring;
 	spinlock_t ring_lock;
+	u16 valcount;
+	struct work_struct poll_work;
 };
 
 static inline struct ioat2_dma_chan *to_ioat2_chan(struct dma_chan *c)
