@@ -119,6 +119,10 @@ int bstr_printf(char *buf, size_t size, const char *fmt, const u32 *bin_buf);
 int bprintf(u32 *bin_buf, size_t size, const char *fmt, ...) __printf(3, 4);
 #endif
 
+#define UUID_SIZE 40
+extern char *uuid_to_string(char *buf, const char uuid[16], int sysfs);
+extern int parse_uuid(int uuid[4], const char *str);
+
 extern ssize_t memory_read_from_buffer(void *to, size_t count, loff_t *ppos,
 			const void *from, size_t available);
 

@@ -51,6 +51,11 @@ unsigned long pci_mem_start = 0xaeedbabe;
 EXPORT_SYMBOL(pci_mem_start);
 #endif
 
+#ifdef CONFIG_ADR
+/* collects protected memory ranges for the bbu driver */
+struct resource *adr_resource[ADR_MAX_REGIONS];
+#endif
+
 /*
  * This function checks if any part of the range <start,end> is mapped
  * with type.
@@ -150,6 +155,8 @@ static void __init e820_print_type(u32 type)
 	case E820_UNUSABLE:
 		printk(KERN_CONT "(unusable)");
 		break;
+	case E820_PROTECTED_KERN:
+		printk(KERN_CONT "(protected)\n");
 	default:
 		printk(KERN_CONT "type %u", type);
 		break;
@@ -691,7 +698,7 @@ void __init e820_mark_nosave_regions(unsigned long limit_pfn)
 			register_nosave_region(pfn, PFN_UP(ei->addr));
 
 		pfn = PFN_DOWN(ei->addr + ei->size);
-		if (ei->type != E820_RAM && ei->type != E820_RESERVED_KERN)
+		if (!is_e820_ram(ei->type) && ei->type != E820_RESERVED_KERN)
 			register_nosave_region(PFN_UP(ei->addr), pfn);
 
 		if (pfn >= limit_pfn)
@@ -1108,7 +1115,7 @@ u64 __init early_reserve_e820(u64 startt, u64 sizet, u64 align)
 /*
  * Find the highest page frame number we have available
  */
-static unsigned long __init e820_end_pfn(unsigned long limit_pfn, unsigned type)
+static unsigned long __init e820_end_pfn(unsigned long limit_pfn)
 {
 	int i;
 	unsigned long last_pfn = 0;
@@ -1119,7 +1126,7 @@ static unsigned long __init e820_end_pfn(unsigned long limit_pfn, unsigned type)
 		unsigned long start_pfn;
 		unsigned long end_pfn;
 
-		if (ei->type != type)
+		if (!is_e820_ram(ei->type))
 			continue;
 
 		start_pfn = ei->addr >> PAGE_SHIFT;
@@ -1144,12 +1151,12 @@ static unsigned long __init e820_end_pfn(unsigned long limit_pfn, unsigned type)
 }
 unsigned long __init e820_end_of_ram_pfn(void)
 {
-	return e820_end_pfn(MAX_ARCH_PFN, E820_RAM);
+	return e820_end_pfn(MAX_ARCH_PFN);
 }
 
 unsigned long __init e820_end_of_low_ram_pfn(void)
 {
-	return e820_end_pfn(1UL<<(32 - PAGE_SHIFT), E820_RAM);
+	return e820_end_pfn(1UL<<(32 - PAGE_SHIFT));
 }
 /*
  * Finds an active region in the address range from start_pfn to last_pfn and
@@ -1171,8 +1178,8 @@ int __init e820_find_active_region(const struct e820entry *ei,
 		return 0;
 
 	/* Skip if map is outside the node */
-	if (ei->type != E820_RAM || *ei_endpfn <= start_pfn ||
-				    *ei_startpfn >= last_pfn)
+	if (!is_e820_ram(ei->type) || *ei_endpfn <= start_pfn ||
+				      *ei_startpfn >= last_pfn)
 		return 0;
 
 	/* Check for overlaps */
@@ -1288,6 +1295,9 @@ static int __init parse_memmap_opt(char *p)
 	} else if (*p == '$') {
 		start_at = memparse(p+1, &p);
 		e820_add_region(start_at, mem_size, E820_RESERVED);
+	} else if (*p == '!') {
+		start_at = memparse(p+1, &p);
+		e820_add_region(start_at, mem_size, E820_PROTECTED_KERN);
 	} else
 		e820_remove_range(mem_size, ULLONG_MAX - mem_size, E820_RAM, 1);
 
@@ -1317,6 +1327,7 @@ static inline const char *e820_type_to_string(int e820_type)
 	case E820_ACPI:	return "ACPI Tables";
 	case E820_NVS:	return "ACPI Non-volatile Storage";
 	case E820_UNUSABLE:	return "Unusable memory";
+	case E820_PROTECTED_KERN: return "Protected RAM";
 	default:	return "reserved";
 	}
 }
@@ -1334,13 +1345,15 @@ void __init e820_reserve_resources(void)
 	res = alloc_bootmem(sizeof(struct resource) * e820.nr_map);
 	e820_res = res;
 	for (i = 0; i < e820.nr_map; i++) {
-		end = e820.map[i].addr + e820.map[i].size - 1;
+		struct e820entry *ei = &e820.map[i];
+
+		end = ei->addr + ei->size - 1;
 		if (end != (resource_size_t)end) {
 			res++;
 			continue;
 		}
-		res->name = e820_type_to_string(e820.map[i].type);
-		res->start = e820.map[i].addr;
+		res->name = e820_type_to_string(ei->type);
+		res->start = ei->addr;
 		res->end = end;
 
 		res->flags = IORESOURCE_MEM;
@@ -1350,18 +1363,21 @@ void __init e820_reserve_resources(void)
 		 * pci device BAR resource and insert them later in
 		 * pcibios_resource_survey()
 		 */
-		if (e820.map[i].type != E820_RESERVED || res->start < (1ULL<<20)) {
-			res->flags |= IORESOURCE_BUSY;
+		if (ei->type != E820_RESERVED || res->start < (1ULL<<20)) {
+			if (ei->type == E820_PROTECTED_KERN)
+				e820_set_adr_resource(res);
+			else
+				res->flags |= IORESOURCE_BUSY;
 			insert_resource(&iomem_resource, res);
 		}
 		res++;
 	}
 
 	for (i = 0; i < e820_saved.nr_map; i++) {
-		struct e820entry *entry = &e820_saved.map[i];
-		firmware_map_add_early(entry->addr,
-			entry->addr + entry->size - 1,
-			e820_type_to_string(entry->type));
+		struct e820entry *ei = &e820_saved.map[i];
+
+		firmware_map_add_early(ei->addr, ei->addr + ei->size - 1,
+				       e820_type_to_string(ei->type));
 	}
 }
 
