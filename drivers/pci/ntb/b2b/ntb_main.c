@@ -57,11 +57,12 @@
  *   OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  * 
  * 
- *  version: Embedded.Release.L.0.5.1-2
+ *  version: Embedded.Release.L.0.5.2-70
  *****************************************************************************/
 
 
 #include "../common/ntb_main.h"
+
 
 MODULE_LICENSE("Dual BSD/GPL");
 
@@ -129,8 +130,13 @@ static struct ntb_api_export ntb_api = {
 	.ntb_write_wccntrl_bit             = ntb_write_wccntrl_bit,
 	.ntb_read_wccntrl_bit              = ntb_read_wccntrl_bit,
 	.ntb_write_remote_translate        = ntb_write_remote_translate,
-	.ntb_read_remote_translate         = ntb_read_remote_translate
-
+	.ntb_read_remote_translate         = ntb_read_remote_translate,
+	.ntb_write_remote_doorbell_mask    = ntb_write_remote_doorbell_mask,
+	.ntb_read_remote_doorbell_mask     = ntb_read_remote_doorbell_mask,
+	.ntb_write_remote_limit            = ntb_write_remote_limit,
+	.ntb_read_remote_limit             = ntb_read_remote_limit,
+	.ntb_write_remote_bar              = ntb_write_remote_bar,
+	.ntb_read_remote_bar               = ntb_read_remote_bar
 };
 
 static spinlock_t lock_pm_event_check;   /*  lock for pm acknowledgment */
@@ -356,7 +362,6 @@ static int32_t ntb_probe(struct pci_dev *dev, const struct pci_device_id *id)
 
 	ntb_get_limit_settings(dev, NTB_BAR_23, device, PRIMARY_CONFIG);
 	ntb_get_limit_settings(dev, NTB_BAR_45, device, PRIMARY_CONFIG);
-	ntb_write_limit_settings_to_scratchpad(device);
 
 	NTB_DEBUG_PRINT(("NTB: LIMIT BASE %Lx\n", device->limit_base_23));
 	NTB_DEBUG_PRINT(("NTB: LIMIT MAX %Lx\n", device->limit_max_23));
@@ -481,8 +486,7 @@ static irqreturn_t ntb_irq_xxx(int irq, void *data)
  ****************************************************************************/
 static void callback_tasklet_func(unsigned long data)
 {
-	uint32_t offset = 0;
-	unsigned long flags;
+	unsigned long flags, offset = 0;
 	struct scratchpad_registers pad;
 	int32_t i = 0;
 	int32_t k = 0;

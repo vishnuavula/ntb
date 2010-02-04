@@ -110,7 +110,10 @@ module_param(tx_pend_pkts,int, 0);
 static int tdelay = 10;
 module_param(tdelay,int, 0);
 
-struct ntbeth_priv * ntbeth_device;
+static int numntbs = 1;
+module_param(numntbs,int, 0);
+
+struct ntbeth_priv * ntbeth_device[NTBETH_MAX_NTB_DEVICES];
 
 static const struct net_device_ops ntbeth_netdev_ops = {
 .ndo_open               = ntbeth_open,
@@ -189,9 +192,9 @@ void rx_copy_callback(void *pref)
 #endif
 	if (use_cb3_dma_engine) {
 		i = cq_get_index(priv->rxcq);
-		dma_unmap_single(NULL, priv->rx_dma_addresses[i], skb->len + 14, DMA_BIDIRECTIONAL);
+		dma_unmap_single(priv->copier.chan->device->dev, priv->rx_dma_addresses[i], skb->len + 14, DMA_BIDIRECTIONAL);
 	}
-	cq_update_get_ptr(priv->rxcq);
+	cq_update_get_ptr(&priv->rxcq);
 	return;
 }
 
@@ -247,6 +250,10 @@ void ntbeth_rx_interrupt(void * pref)
 	unsigned int len,avail_index;
 	NTBETHDEBUG("ntbeth_rx_interrupt entered with devptr 0x%Lx\n",(unsigned long long)dev);
 	NTBETHDEBUG("ntbeth_rx_interrupt entered with priv 0x%Lx\n",(unsigned long long)priv);
+	#ifdef DB_INTER_LOCK
+		priv->rxcq->rx_db_count++;
+	#else
+	#endif
 	spin_lock_bh(&priv->lock);
 	while (cq_is_buf_ready(priv->rxcq)) {
 		avail_index = cq_avail_get_index(priv->rxcq);
@@ -269,6 +276,9 @@ void ntbeth_rx_interrupt(void * pref)
 		skb->dev = dev;
 		skb->ip_summed = CHECKSUM_UNNECESSARY;
 		skb_reserve(skb, 2);
+		//printk(" %d ", priv->ntbdev.instance_id);
+		//dump_memory(data+4+26 , 4, "s");
+		//dump_memory(data+4+30 , 4, "d");
 		ntbeth_copier_copy_to_skb(&priv->copier,data+4, len, skb,&priv->rx_dma_addresses[avail_index], rx_copy_callback, skb);
 	}
 	spin_unlock_bh(&priv->lock);
@@ -294,25 +304,21 @@ void tx_copy_callback(void *pref)
 	NTBETHDEBUG("tx_copy_callback invoked\n");
 	// we also need to send interrupt to the remote node
 	if (use_cb3_dma_engine) {
-		i= cq_put_index(priv->txcq);
+		i= cq_put_index(&priv->txcq);
 		//dump_memory((((char *)cq_get_buffer(priv->txcq,i)) + 4) , skb->len, "");
-		dma_unmap_single(NULL, priv->tx_dma_addresses[i], skb->len, DMA_BIDIRECTIONAL);
+		dma_unmap_single(priv->copier.chan->device->dev, priv->tx_dma_addresses[i], skb->len, DMA_BIDIRECTIONAL);
 	}
-	cq_update_put_ptr(priv->txcq);
+	cq_update_put_ptr(&priv->txcq);
 	dev_kfree_skb(skb);
-	if (priv->tx_pending_pkts > tx_pend_pkts) {
-		priv->tx_pending_pkts = 0;
+#ifdef DB_INTER_LOCK
+	if(priv->txcq->tx_db_count == priv->txcq->rx_db_count) {
 		ntbdev_send_packet_txed_interrupt(&priv->ntbdev);
-	} else {
-		if (!priv->tx_pending_pkts) {
-			priv->tx_pending_pkts++;
-			priv->perf_tmr.data = (unsigned long)priv;
-			priv->perf_tmr.function = ntbeth_perf_tmr_handler;
-			priv->perf_tmr.expires = jiffies + tdelay;
-			add_timer(&priv->perf_tmr);
-		}
-		// we wait for timer to expire and send txed interrupt
+		priv->txcq->tx_db_count++;
 	}
+#else
+	ntbdev_send_packet_txed_interrupt(&priv->ntbdev);
+
+#endif 
 	return;
 }
 
@@ -345,15 +351,15 @@ int ntbeth_tx(struct sk_buff *skb, struct net_device *dev)
 			return 0;
 		}
 	}
-	if (!cq_is_buf_avail(priv->txcq)) {
+	if (!cq_is_buf_avail(&priv->txcq)) {
 		ntbdev_send_packet_txed_interrupt(&priv->ntbdev);
 		priv->stats.tx_dropped++;
 		dev_kfree_skb(skb);
 		spin_unlock_bh(&priv->lock);
 		return 0;
 	}
-	avail_index = cq_avail_put_index(priv->txcq);
-	data = cq_get_current_put_entry_loc(priv->txcq);
+	avail_index = cq_avail_put_index(&priv->txcq);
+	data = cq_get_current_put_entry_loc(&priv->txcq);
 	if (data == NULL) {
 		printk("Something wrong while accessing cq \n");
 		printk("avail_index is %d\n", avail_index);
@@ -422,10 +428,8 @@ int ntbeth_init(struct net_device *dev)
 		printk("NTBETH: Using CPU for Packet Copying\n");
 
 	/* Set up some of the private variables now */
-	memset(priv, 0, sizeof(struct ntbeth_priv));
 	NTBETHDEBUG("private ptr: 0x%Lx\n", (unsigned long long)priv);
 	priv->status = 0;
-	init_timer(&priv->perf_tmr);
 	spin_lock_init(&priv->lock);
 	netif_stop_queue(dev);
 	update_peer_status(dev,NTBETH_LOCAL_PEER_DOWN);
@@ -444,6 +448,7 @@ int ntbeth_init(struct net_device *dev)
 	// Initialize CQ to recv message from remote side
 	priv->rxcq = ntbdev_get_bar23_local_memory(&priv->ntbdev);
 	priv->txcq = ntbdev_get_bar23_value(&priv->ntbdev);
+	priv->txf.cq_size = cq_calculate_num_entries(bar23_size); 
 	init_cq(priv->rxcq, cq_calculate_num_entries(bar23_size),NTBETH_RX_CQ);
 	priv->tx_dma_addresses = kmalloc(cq_calculate_num_entries(bar23_size) *sizeof(dma_addr_t), GFP_KERNEL);
 	priv->rx_dma_addresses = kmalloc(cq_calculate_num_entries(bar23_size) *sizeof(dma_addr_t), GFP_KERNEL);
@@ -471,50 +476,63 @@ int ntbeth_set_mac_address(struct net_device *netdev, void *p)
 
 void ntbeth_cleanup(void)
 {
-	unregister_netdev(ntbeth_device->netdev);
-	ntbeth_copier_cleanup(&ntbeth_device->copier);
-	// cleanup ntb device info structures.
-	ntbdev_cleanup(&ntbeth_device->ntbdev);
-	del_timer_sync(&ntbeth_device->perf_tmr);
-	// have to free private structure TBD???
-	kfree(ntbeth_device->tx_dma_addresses);
-	kfree(ntbeth_device->rx_dma_addresses);
+	int i;
+	for(i=0; i < numntbs;i++)
+	{
+		unregister_netdev(ntbeth_device[i]->netdev);
+		ntbeth_copier_cleanup(&ntbeth_device[i]->copier);
+		// cleanup ntb device info structures.
+		ntbdev_cleanup(&ntbeth_device[i]->ntbdev);
+		// have to free private structure TBD???
+		kfree(ntbeth_device[i]->tx_dma_addresses);
+		kfree(ntbeth_device[i]->rx_dma_addresses);
+	}
 	return;
 }
 
 int ntbeth_init_module(void)
 {
 	int err;
+	int i;
 	struct net_device * netdev;
 	struct ntbeth_priv *priv;
-	if (!(netdev = alloc_etherdev(sizeof(struct ntbeth_priv)))) {
-		printk(KERN_ERR "Etherdev alloc failed, abort.\n");
-		return -ENOMEM;
-	}
-	if (ntbeth_init(netdev)) {
-		printk("ERROR NTBETH: ntbeth_initialization failed\n");
-		return -ENOMEM;
-	}
-	NTBETHDEBUG("netdev ptr 0x%Lx\n", (unsigned long long)netdev);
-	netdev->netdev_ops = &ntbeth_netdev_ops;
-	netdev->watchdog_timeo = NTBETH_WATCHDOG_PERIOD;
-	strncpy(netdev->name, "ntb1",5);
-	if ((err = register_netdev(netdev))) {
-		printk(KERN_ERR "Unable to register network device with Kernel\n");
-		return err;
-	}
-	priv = netdev_priv(netdev);
-	priv->netdev = netdev;
-	ntbeth_device = priv;
+	for(i=0; i < numntbs;i++)
+	{
+		if (!(netdev = alloc_etherdev(sizeof(struct ntbeth_priv)))) {
+			printk(KERN_ERR "Etherdev alloc failed, abort.\n");
+			return -ENOMEM;
+		}
+		NTBETHDEBUG("netdev ptr 0x%Lx\n", (unsigned long long)netdev);
+		netdev->netdev_ops = &ntbeth_netdev_ops;
+		netdev->watchdog_timeo = NTBETH_WATCHDOG_PERIOD;
+		if(i==0)
+			strncpy(netdev->name, "ntb1",5);
+		else
+			strncpy(netdev->name, "ntb2",5);
+
+		if ((err = register_netdev(netdev))) {
+			printk(KERN_ERR "Unable to register network device with Kernel\n");
+			return err;
+		}
+		priv = netdev_priv(netdev);
+		memset(priv, 0, sizeof(struct ntbeth_priv));
+		priv->netdev = netdev;
+		priv->ntbdev.instance_id = i;
+		ntbeth_device[i] = priv;
+		if (ntbeth_init(netdev)) {
+			printk("ERROR NTBETH: ntbeth_initialization failed\n");
+			return -ENOMEM;
+		}
 	// subscribe to rx interrupt callback
-	ntbdev_subscribe_to_rx_int(&priv->ntbdev, ntbeth_rx_interrupt, netdev);
-	ntbdev_subscribe_to_txack_int(&priv->ntbdev, ntbeth_txack_interrupt, netdev);
-	ntbdev_subscribe_to_ping_int(&priv->ntbdev, ntbeth_ping_interrupt, netdev);
-	ntbdev_subscribe_to_ping_ack_int(&priv->ntbdev, ntbeth_ping_ack_interrupt, netdev);
-	ntbdev_subscribe_to_lnkchg_int(&priv->ntbdev, ntbeth_lnkchg_interrupt, netdev);
-	ntbdev_subscribe_to_close_int(&priv->ntbdev, ntbeth_close_interrupt, netdev);
-	NTBETHDEBUG(" ntbeth_init_module completed successfully\n");
-	NTBETHDEBUG( "ntbeth_init_module completed successfully\n");
+		ntbdev_subscribe_to_rx_int(&priv->ntbdev, ntbeth_rx_interrupt, netdev);
+		ntbdev_subscribe_to_txack_int(&priv->ntbdev, ntbeth_txack_interrupt, netdev);
+		ntbdev_subscribe_to_ping_int(&priv->ntbdev, ntbeth_ping_interrupt, netdev);
+		ntbdev_subscribe_to_ping_ack_int(&priv->ntbdev, ntbeth_ping_ack_interrupt, netdev);
+		ntbdev_subscribe_to_lnkchg_int(&priv->ntbdev, ntbeth_lnkchg_interrupt, netdev);
+		ntbdev_subscribe_to_close_int(&priv->ntbdev, ntbeth_close_interrupt, netdev);
+		NTBETHDEBUG(" ntbeth_init_module completed successfully\n");
+		NTBETHDEBUG( "ntbeth_init_module completed successfully\n");
+	}
 	return 0;
 }
 

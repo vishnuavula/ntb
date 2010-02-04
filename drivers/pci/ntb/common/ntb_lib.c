@@ -56,7 +56,7 @@
  *   OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  * 
  * 
- *  version: Embedded.Release.L.0.5.1-2
+ *  version: Embedded.Release.L.0.5.2-70
  *****************************************************************************/
 /*****************************************************************************
  * FILE CONTENTS: Functions private to the driver. These APIs will not
@@ -108,10 +108,10 @@ void ntb_lib_write_64(void *mm_regs, uint64_t offset, uint64_t value)
 	uint32_t upper = value >> BIT_SHIFT_32;
 
 	NTB_DEBUG_PRINT(("NTBC WRITE64 VALUE  %Lx\n", value));
+	NTB_DEBUG_PRINT(("NTBC WRITE64 VALUE Lower %x Upper %x\n", lower, upper));
 	if (offset >= NTB_PBAR_23_LIMIT_OFFSET) {
-
-		iowrite32(lower, (uint8_t *)mm_regs + offset);
 		iowrite32(upper, (uint8_t *)mm_regs + offset + OFFSET_4);
+		iowrite32(lower, (uint8_t *)mm_regs + offset);
 
 		NTB_DEBUG_PRINT(("NTBC WRITE64 MMREGS  %p\n",
 				mm_regs));

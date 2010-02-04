@@ -68,7 +68,9 @@
 #define NTBETH_SUCCESS 0
 #define NTBETH_FAIL 1
 
-#define NTBETH_VERSION     "3.2"
+#define NTBETH_VERSION     "4.04"
 #define NTBETH_MAX_PEND_PKTS 10
+
+#define NTBETH_MAX_NTB_DEVICES 2
 
 #endif

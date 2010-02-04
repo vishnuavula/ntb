@@ -57,7 +57,7 @@
  *   OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  * 
  * 
- *  version: Embedded.Release.L.0.5.1-2
+ *  version: Embedded.Release.L.0.5.2-70
  ****************************************************************************/
 
 
@@ -288,6 +288,7 @@ enum ntb_bar_t bar)
 		if (device != NULL && (bar == NTB_BAR_45))
 			return device->pci_bar[DEVICE_BAR_45];
 	}
+	printk("returning 0\n");
 	NTB_DEBUG_PRINT(
 	("NTBC: ntb_get_bar_address - wrong handle/bar supplied \n"));
 	/* Assumption that 0 is an invalid BAR address */
@@ -322,6 +323,7 @@ struct ntb_device *device, int32_t cmd)
 	uint64_t len              = 0;
 #endif
 	uint8_t len_byte          = 0;
+	uint64_t secondary_base    = 0;
 
 	if (cmd == PRIMARY_CONFIG) {
 
@@ -338,10 +340,10 @@ struct ntb_device *device, int32_t cmd)
 			device->limit_base_23 = base;
 			device->limit_max_23 = len;
 #ifdef CONFIG_X86_32
-			NTB_DEBUG_PRINT(("NTB: Base Setting %x\n",
+			NTB_DEBUG_PRINT(("NTB: Local Side Base Addr %x\n",
 			base));
 #else
-			NTB_DEBUG_PRINT(("NTB: Base Setting %Lx\n",
+			NTB_DEBUG_PRINT(("NTB: Local Side Base Addr %Lx\n",
 			base));
 #endif
 
@@ -356,11 +358,15 @@ struct ntb_device *device, int32_t cmd)
 			device->limit_max_45 = len;
 
 #ifdef CONFIG_X86_32
-			NTB_DEBUG_PRINT(("NTB: Base Setting %x\n",
+			NTB_DEBUG_PRINT(("NTB: Local Side Base Addr %x\n",
 			base));
+			NTB_DEBUG_PRINT(("NTB: Length %x\n",
+						len));
 #else
-			NTB_DEBUG_PRINT(("NTB: Base Setting %Lx\n",
+			NTB_DEBUG_PRINT(("NTB: Local Side Base Addr %Lx\n",
 			base));
+			NTB_DEBUG_PRINT(("NTB: Length %Lx\n",
+						len));
 #endif
 		}
 
@@ -368,7 +374,7 @@ struct ntb_device *device, int32_t cmd)
 	} else if (cmd == SECONDARY_CONFIG) {
 		if (bar == NTB_BAR_23) {
 
-			base = ntb_lib_read_64(device->mm_regs,
+			secondary_base = ntb_lib_read_64(device->mm_regs,
 			NTB_SECONDARY_BASE_2_OFFSET);
 
 			pci_read_config_byte(dev, NTB_SECONDARY_LIMIT_MAX_23,
@@ -376,15 +382,23 @@ struct ntb_device *device, int32_t cmd)
 
 			len = pow_exp(len_byte);
 
-			base = base & ~SHIFT_LOWER;
-			device->secondary_limit_base_23 = base;
+			secondary_base = secondary_base & ~SHIFT_LOWER;
+			device->secondary_limit_base_23 = secondary_base;
 			device->secondary_limit_max_23 = len;
 
-
+			NTB_DEBUG_PRINT(
+			("NTB: secondary_base %Lx\n", secondary_base));
+#ifdef CONFIG_X86_32
+			NTB_DEBUG_PRINT(("NTB: Sec side length %x\n",
+			len));
+#else
+			NTB_DEBUG_PRINT(("NTB: Sec side length %Lx\n",
+			len));
+#endif
 
 		} else if (bar == NTB_BAR_45) {
 
-			base = ntb_lib_read_64(device->mm_regs,
+			secondary_base = ntb_lib_read_64(device->mm_regs,
 			NTB_SECONDARY_BASE_4_OFFSET);
 
 			pci_read_config_byte(dev, NTB_SECONDARY_LIMIT_MAX_45,
@@ -392,21 +406,24 @@ struct ntb_device *device, int32_t cmd)
 
 			len = pow_exp(len_byte);
 
-			base = base & ~SHIFT_LOWER;
-			device->secondary_limit_base_45 = base;
+			secondary_base = secondary_base & ~SHIFT_LOWER;
+			device->secondary_limit_base_45 = secondary_base;
 			device->secondary_limit_max_45 = len;
+
+			NTB_DEBUG_PRINT(
+			("NTB: secondary_base %Lx\n", secondary_base));
+#ifdef CONFIG_X86_32
+			NTB_DEBUG_PRINT(("NTB:  Sec side length %x\n",
+			len));
+#else
+			NTB_DEBUG_PRINT(("NTB:  Sec side length %Lx\n",
+			len));
+#endif
 
 		}
 
 	}
 
-#ifdef CONFIG_X86_32
-	NTB_DEBUG_PRINT(("NTB: base %x\n", base));
-	NTB_DEBUG_PRINT(("NTB: max limit %x\n", len));
-#else
-	NTB_DEBUG_PRINT(("NTB: base %Lx\n", base));
-	NTB_DEBUG_PRINT(("NTB: max limit %Lx\n", len));
-#endif
 
 }
 
@@ -453,17 +470,12 @@ int32_t ntb_write_remote_bar(ntb_client_handle_t handle, enum ntb_bar_t bar,
 uint64_t address)
 {
 	struct ntb_device *device = NULL;
-
-#ifdef CONFIG_X86_32
-	uint32_t new_address = address;
-
-#else
 	uint64_t new_address = address;
 
-#endif
 	device = ntb_get_device_by_handle(handle);
 	if (device == NULL) {
-		NTB_DEBUG_PRINT(("NTB: SET POLICY- NULL Device Returned\n"));
+		NTB_DEBUG_PRINT(
+			("NTB: WRITE Remote BAR - NULL Device Returned\n"));
 		return -EINVAL;
 	}
 
@@ -487,20 +499,15 @@ uint64_t address)
 /*****************************************************************************
  * See ntb_main.h
  ****************************************************************************/
-uint64_t ntb_read_remote_bar(ntb_client_handle_t handle, enum ntb_bar_t bar)
+int64_t ntb_read_remote_bar(ntb_client_handle_t handle, enum ntb_bar_t bar)
 {
 	struct ntb_device *device = NULL;
-
-#ifdef CONFIG_X86_32
-	uint32_t address = 0;
-
-#else
 	uint64_t address = 0;
 
-#endif
 	device = ntb_get_device_by_handle(handle);
 	if (device == NULL) {
-		NTB_DEBUG_PRINT(("NTB: SET POLICY- NULL Device Returned\n"));
+		NTB_DEBUG_PRINT(
+		("NTB: Read Remote BAR - NULL Device Returned\n"));
 		return -EINVAL;
 	}
 
@@ -513,6 +520,8 @@ uint64_t ntb_read_remote_bar(ntb_client_handle_t handle, enum ntb_bar_t bar)
 	else if (bar == NTB_BAR_45)
 		address = ntb_lib_read_64(device->mm_regs,
 		NTB_SECONDARY_BASE_4_OFFSET);
+	else 
+		return -EINVAL;
 
 
 	return address;

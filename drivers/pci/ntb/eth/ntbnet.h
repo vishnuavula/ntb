@@ -88,6 +88,7 @@ struct ntbeth_priv
 	struct net_device *netdev;
 	struct cq *rxcq; // reside locally
 	struct cq *txcq; // reside locally but packet store is remote
+	struct q_tx_fields txf;
 	int peer_status;
 	int local_drv_if_status;
 	int remote_drv_if_status;
@@ -100,6 +101,8 @@ struct ntbeth_priv
 	dma_addr_t *tx_dma_addresses;
 	int tx_pending_pkts;
 	struct timer_list perf_tmr;
+	int ltx_db_count;
+	int lrx_db_count;
 };
 
 int ntbeth_open(struct net_device *dev);

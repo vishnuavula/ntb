@@ -54,13 +54,37 @@
 
 /* This file implements network driver over NTB PCIE-LINK */
 #include <linux/module.h>
+
+#include <linux/module.h>
+#include <linux/init.h>
+#include <linux/moduleparam.h>
+#include <linux/sched.h>
+#include <linux/kernel.h>
+#include <linux/slab.h>
+#include <linux/errno.h>
+#include <linux/types.h>
+#include <linux/interrupt.h>
+#include <linux/in.h>
+#include <linux/netdevice.h>
+#include <linux/etherdevice.h>
+#include <linux/inetdevice.h>
+#include <net/neighbour.h>
+#include <linux/ip.h>
+#include <linux/tcp.h>
+#include <linux/skbuff.h>
+#include <linux/async_tx.h>
+#include <linux/in6.h>
+#include <asm/checksum.h>
 #include "ntbethcq.h"
+#include "ntbdev.h"
+#include "ntbethcopier.h"
+#include "ntbnet.h"
 	
 int init_cq(struct cq *cq, int cq_size, unsigned int cq_type)
 {
 	cq->cq_type = cq_type;
 	// intialize both put and get pointers to 0
-	cq->avail_put_index = cq->avail_get_index = cq->put_index = cq->get_index = 0 ;
+	cq->avail_put_index = cq->avail_get_index = cq->put_index = cq->get_index = cq->rx_db_count = cq->tx_db_count= 0 ;
 	cq->cq_size = cq_size;
 	cq->signature = 0xA12B23C3;
 	return NTBETH_SUCCESS;
@@ -82,9 +106,11 @@ inline int is_cq_full(struct cq *cq)
 }
 	
 	// this routine returns 0 if the q is full.
-inline void *cq_get_current_put_entry_loc(struct cq *cq)
+inline void *cq_get_current_put_entry_loc(struct cq **pcq)
 {
 	void *loc;
+	struct cq *cq = *pcq;
+#ifndef NTBWRITES_ONLY
 	if(cq_validate(cq)) {
 		printk("NTBETHCQ: ERROR cq validation failed in cq_get_current_put_entry_loc\n");
 		return 0;
@@ -95,12 +121,23 @@ inline void *cq_get_current_put_entry_loc(struct cq *cq)
 	} else {
 		cq->avail_put_index = cq->avail_put_index + 1;
 	}
+#else
+	struct ntbeth_priv *priv = container_of(pcq, struct ntbeth_priv, txcq);
+	loc =  ((void *)&cq->qarray[priv->txf.avail_put_index]);
+	if((priv->txf.avail_put_index+1) == priv->txf.cq_size) {
+		priv->txf.avail_put_index = 0;
+	} else {
+		priv->txf.avail_put_index = priv->txf.avail_put_index + 1;
+	}
+	cq->avail_put_index = priv->txf.avail_put_index;
+#endif 
 	return loc;
 }
 	
 	// return 1 if validation fails 0 if success
 int cq_validate(struct cq *cq)
 {
+#ifndef NTBWRITES_ONLY
 	if (cq->put_index > cq->cq_size)
 		goto validate_fail;
 	if (cq->avail_put_index > cq->cq_size)
@@ -119,10 +156,13 @@ int cq_validate(struct cq *cq)
 		cq_dump_debug_data(cq,"VALIDATION");
 		return NTBETH_FAIL;
 	validate_pass:
+#endif
 	return NTBETH_SUCCESS;
 }
-inline int cq_update_put_ptr(struct cq *cq)
+inline int cq_update_put_ptr(struct cq **pcq)
 {
+struct cq *cq = *pcq;
+#ifndef NTBWRITES_ONLY
 	if (cq_validate(cq)) {
 		printk("NTHETHCQ: cq_update_put_ptr cq validate failed\n");
 		return 1;
@@ -131,6 +171,14 @@ inline int cq_update_put_ptr(struct cq *cq)
 		cq->put_index = 0;
 	else
 		cq->put_index = cq->put_index + 1;
+#else
+	struct ntbeth_priv *priv = container_of(pcq, struct ntbeth_priv, txcq);
+	if ((priv->txf.put_index+1) == priv->txf.cq_size)
+		priv->txf.put_index = 0;
+	else
+		priv->txf.put_index = priv->txf.put_index + 1;
+	cq->put_index = priv->txf.put_index;
+#endif
 	return NTBETH_SUCCESS;
 }
 	
@@ -149,8 +197,12 @@ inline void *cq_get_current_get_entry_loc(struct cq *cq)
 	return loc;
 }
 	
-inline int cq_update_get_ptr(struct cq *cq)
+inline int cq_update_get_ptr(struct cq **pcq)
 {
+	struct cq *cq = *pcq;
+#ifdef NTBWRITES_ONLY
+	struct ntbeth_priv *priv = container_of(pcq, struct ntbeth_priv, rxcq);
+#endif 
 	if (cq_validate(cq)) {
 		printk("NTBETHCQ: before cq_update_get_ptr cq validate failed\n");
 		return 1;
@@ -159,6 +211,9 @@ inline int cq_update_get_ptr(struct cq *cq)
 		cq->get_index = 0;
 	else
 		cq->get_index = cq->get_index + 1;
+#ifdef NTBWRITES_ONLY
+	ntbdev_write_scratch_pad_one(&priv->ntbdev,1,cq->get_index);
+#endif 
 	return 0;
 }
 	
@@ -192,22 +247,45 @@ inline int cq_is_buf_ready(struct cq *cq)
 }
 	// return  0 if  full
 	//return  non-zero if  enough space to copy
-inline int cq_is_buf_avail(struct cq *cq)
+inline int cq_is_buf_avail(struct cq ** pcq)
 {
+#ifndef NTBWRITES_ONLY
+	struct cq *cq = *pcq; 
 	return(!(((cq->avail_put_index + 1) % cq->cq_size) == cq->get_index));
+#else
+	struct ntbeth_priv *priv = container_of(pcq, struct ntbeth_priv, txcq);
+	unsigned int get_index;
+	ntbdev_read_scratch_pad_one(&priv->ntbdev, 1, &get_index);
+	return(!(((priv->txf.avail_put_index + 1) % priv->txf.cq_size) == get_index));
+#endif
 }
 	
-inline  unsigned int cq_avail_put_index(struct cq *cq)
+inline  unsigned int cq_avail_put_index(struct cq **pcq)
 {
+#ifndef NTBWRITES_ONLY
+	struct cq *cq = *pcq; 
 	return (cq->avail_put_index);
+#else
+	struct ntbeth_priv *priv = container_of(pcq, struct ntbeth_priv, txcq);
+	return priv->txf.avail_put_index;
+
+#endif
 }
 inline unsigned int cq_avail_get_index(struct cq *cq)
 {
 	return (cq->avail_get_index);
 }
-inline  unsigned int cq_put_index(struct cq *cq)
+inline  unsigned int cq_put_index(struct cq ** pcq)
 {
+struct cq *cq = *pcq;
+
+#ifndef NTBWRITES_ONLY
 	return (cq->put_index);
+#else
+	struct ntbeth_priv *priv =  container_of(pcq, struct ntbeth_priv, txcq);
+	return priv->txf.put_index;    
+	
+#endif
 }
 inline unsigned int cq_get_index(struct cq *cq)
 {

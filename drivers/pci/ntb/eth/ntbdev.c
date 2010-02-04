@@ -56,11 +56,43 @@
 
 #include "ntbdev.h"
 
-struct ntbeth_ntbdev *gntbdev;
+struct ntbeth_ntbdev *gntbdev[NTBETH_MAX_NTB_DEVICES];
 
-void ntbeth_bar23_callback(ntb_client_handle_t handle, int16_t doorbell_value, struct scratchpad_registers pad)
+void ntbeth_bar23_callback0(ntb_client_handle_t handle, int16_t doorbell_value, struct scratchpad_registers pad)
 {
-	struct ntbeth_ntbdev *pdev = gntbdev;
+	struct ntbeth_ntbdev *pdev = gntbdev[0];
+	NTBETHDEBUG( "Entered ntbeth_bar23_callback db val 0x%x\n",doorbell_value);
+	if (doorbell_value & 0x8000) {
+		NTBETHDEBUG( "Link Change Door bEll set \n");
+	}
+	if (doorbell_value & (1<< pdev->rx_int_doorbell_num)) {
+		NTBETHDEBUG( "Invoking rx_interrupt callback\n");
+		if(pdev->prx_int_callback)
+			pdev->prx_int_callback(pdev->rx_int_callback_ref);
+	}
+	if (doorbell_value & (0x2 << pdev->rx_int_doorbell_num)) {
+		NTBETHDEBUG( "Invoking tx_ack_interrupt callback\n");
+		pdev->ptx_ack_int_callback(pdev->tx_ack_int_callback_ref);
+	}
+	if (doorbell_value & (0x4 << pdev->rx_int_doorbell_num)) {
+		NTBETHDEBUG( "Invoking ping_interrupt callback\n");
+		if(pdev->ping_int_callback)
+			pdev->ping_int_callback(pdev->ping_int_callback_ref);
+	}
+	if (doorbell_value & (0x8 << pdev->rx_int_doorbell_num)) {
+	NTBETHDEBUG( "Invoking ping_ack_interrupt callback\n");
+	if(pdev->ping_ack_int_callback)
+		pdev->ping_ack_int_callback(pdev->ping_ack_int_callback_ref);
+	}
+	if (doorbell_value & (0x10 << pdev->rx_int_doorbell_num)) {
+		NTBETHDEBUG( "Invoking close int callback\n");
+		if(pdev->close_int_callback)
+			pdev->close_int_callback(pdev->ping_ack_int_callback_ref);
+	}
+}
+void ntbeth_bar23_callback1(ntb_client_handle_t handle, int16_t doorbell_value, struct scratchpad_registers pad)
+{
+	struct ntbeth_ntbdev *pdev = gntbdev[1];
 	NTBETHDEBUG( "Entered ntbeth_bar23_callback db val 0x%x\n",doorbell_value);
 	if (doorbell_value & 0x8000) {
 		NTBETHDEBUG( "Link Change Door bEll set \n");
@@ -104,23 +136,39 @@ int ntbdev_init(struct ntbeth_ntbdev *pdev, int bar23_size, int bar45_size, int 
 	pdev->barinfo[1].bar_size = bar45_size;
 	pdev->rx_int_doorbell_num = rx_int_doorbell_num;
 	spin_lock_init(&pdev->db_lock);
-	gntbdev = pdev; // remember pointer to ntbdev here because in NTB callbacks we do not have a facility to get the context back. Thus we use global variable
 	ntb_get_api(&pdev->funcs);
 	if(pdev->funcs.ntb_get_number_devices() < 1) {
 		printk("ERROR: NO NTB-NTB DEVICES found\n");
 		return (NTBETH_FAIL);
 	}
-
-	pdev->barinfo[NTBETH_BAR23INFO_INDEX].handle = pdev->funcs.ntb_register_client(NTB_BAR_23, ntbeth_bar23_callback,NTBDEV_D3_F0,NULL);
-	if(pdev->barinfo[NTBETH_BAR23INFO_INDEX].handle == -EPERM) {
-		return (NTBETH_FAIL);
+	if(pdev->instance_id) {
+		gntbdev[1] = pdev;
+	 // remember pointer to ntbdev here because in NTB callbacks we do not have a facility to get the context back. Thus we use global variable
+		pdev->barinfo[NTBETH_BAR23INFO_INDEX].handle = pdev->funcs.ntb_register_client(NTB_BAR_23, ntbeth_bar23_callback1,NTBDEV1_D3_F0,NULL);
+		if(pdev->barinfo[NTBETH_BAR23INFO_INDEX].handle == -EPERM) {
+			return (NTBETH_FAIL);
+		}
+	}
+	else {
+		gntbdev[0] = pdev;
+		pdev->barinfo[NTBETH_BAR23INFO_INDEX].handle = pdev->funcs.ntb_register_client(NTB_BAR_23, ntbeth_bar23_callback0,NTBDEV0_D3_F0,NULL);
+		if(pdev->barinfo[NTBETH_BAR23INFO_INDEX].handle == -EPERM) {
+			return (NTBETH_FAIL);
+		}
 	}
 	pdev->barinfo[NTBETH_BAR23INFO_INDEX].bar_pci_address =  pdev->funcs.ntb_get_bar_address(pdev->barinfo[NTBETH_BAR23INFO_INDEX].handle, NTB_BAR_23);
 	pdev->barinfo[NTBETH_BAR23INFO_INDEX].bar_virt_address =  ioremap(pdev->barinfo[NTBETH_BAR23INFO_INDEX].bar_pci_address, bar23_size);
-
-	pdev->barinfo[NTBETH_BAR45INFO_INDEX].handle = pdev->funcs.ntb_register_client(NTB_BAR_45, ntbeth_bar45_callback,NTBDEV_D3_F0,NULL);
-	if(pdev->barinfo[NTBETH_BAR45INFO_INDEX].handle == -EPERM) {
-		return (NTBETH_FAIL);
+	if(pdev->instance_id) {
+		pdev->barinfo[NTBETH_BAR45INFO_INDEX].handle = pdev->funcs.ntb_register_client(NTB_BAR_45, ntbeth_bar45_callback,NTBDEV1_D3_F0,NULL);
+		if(pdev->barinfo[NTBETH_BAR45INFO_INDEX].handle == -EPERM) {
+			return (NTBETH_FAIL);
+		}
+	}
+	else {
+		pdev->barinfo[NTBETH_BAR45INFO_INDEX].handle = pdev->funcs.ntb_register_client(NTB_BAR_45, ntbeth_bar45_callback,NTBDEV0_D3_F0,NULL);
+		if(pdev->barinfo[NTBETH_BAR45INFO_INDEX].handle == -EPERM) {
+			return (NTBETH_FAIL);
+		}
 	}
 	pdev->barinfo[NTBETH_BAR45INFO_INDEX].bar_pci_address =  pdev->funcs.ntb_get_bar_address(pdev->barinfo[NTBETH_BAR45INFO_INDEX].handle, NTB_BAR_45);
 	pdev->barinfo[NTBETH_BAR45INFO_INDEX].bar_virt_address =  ioremap(pdev->barinfo[NTBETH_BAR45INFO_INDEX].bar_pci_address, bar45_size);
@@ -168,7 +216,8 @@ int ntbdev_alloc_dma_memory(struct device *pdev, void **virt_addr, int size, dma
 		return (NTBETH_FAIL);
 	}
 	else {
-		NTBETHDEBUG("ntbdev_alloc_dma_memory: successfully allocated %d bytes of memory\n", size);
+		NTBETHDEBUG("ntbdev_alloc_dma_memory: successfully allocated %d bytes of memory virt_address 0%Lx BusAddress 0x%Lx\n", size, *virt_addr, *bus_address);
+		printk("ntbdev_alloc_dma_memory: successfully allocated %d bytes of memory virt_address 0%Lx BusAddress 0x%Lx\n", size, *virt_addr, *bus_address);
 		return (NTBETH_SUCCESS);
 	}
 }
@@ -286,10 +335,13 @@ void ntbdev_send_packet_transfer_ack_interrupt(struct ntbeth_ntbdev *pdev)
 void ntbdev_send_ping_doorbell_interrupt(struct ntbeth_ntbdev *pdev)
 {
 	unsigned short doorbell_value;
+	unsigned int temp_value;
 	doorbell_value = 0x4;
 	/* set bit corresponding the door bell we are using  */
 	doorbell_value <<= pdev->rx_int_doorbell_num;
 	ntbdev_send_doorbell(pdev, doorbell_value);
+	//pdev->funcs.ntb_write_scratch_pad_one(1,jiffies, pdev->barinfo[NTBETH_BAR23INFO_INDEX].handle);
+	//pdev->funcs.ntb_read_scratch_pad_one(1,&temp_value, pdev->barinfo[NTBETH_BAR23INFO_INDEX].handle);
 	NTBETHDEBUG("Sent Ping Interrupt to Remote\n");
 	return;
 }
@@ -363,4 +415,12 @@ int ntbdev_get_bus_address_for_remote_buffers(struct ntbeth_ntbdev *pdev, void *
 	}
 	NTBETHDEBUG(" Bus Address for remote buffers 0x%Lx\n", (unsigned long long)*bus_address);
 	return (NTBETH_SUCCESS);
+}
+int ntbdev_read_scratch_pad_one(struct ntbeth_ntbdev *pdev, int spadnum, unsigned int *value )
+{
+	return (pdev->funcs.ntb_read_scratch_pad_one(spadnum,value, pdev->barinfo[NTBETH_BAR23INFO_INDEX].handle));
+}
+int ntbdev_write_scratch_pad_one(struct ntbeth_ntbdev *pdev, int spadnum, unsigned int value )
+{
+	return (pdev->funcs.ntb_write_scratch_pad_one(spadnum,value, pdev->barinfo[NTBETH_BAR23INFO_INDEX].handle));
 }

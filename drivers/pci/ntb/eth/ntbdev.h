@@ -62,7 +62,8 @@
 	
 // some of the register offsets are defined here, though when NTB API is complete, these offsets may not be required
 
-#define NTBDEV_D3_F0  0x0018
+#define NTBDEV0_D3_F0  0x0018
+#define NTBDEV1_D3_F0  0x8018
 	
 #define SBAR2XLAT_REG_OFFSET 0x30
 #define SBAR4XLAT_REG_OFFSET 0x38
@@ -93,6 +94,7 @@ struct ntbeth_ntbdev
 {
 	struct ntb_api_export funcs;
 	struct ntbeth_ntb_bar_client_info barinfo[2];
+	int instance_id;
 	int rx_int_doorbell_num;
 	int wc_flush_req_count;
 	int wc_flush_ack_count;
@@ -121,7 +123,7 @@ struct ntbeth_ntbdev
 	
 // currently NTB API does not take a context pointer that will be returned in the callback when the door bell interrupts happen. Because of this we need to store the context in a global pointer that is accessible from the callback invoked in taskelet context.
 	
-extern struct ntbeth_ntbdev *gntbdev;
+extern struct ntbeth_ntbdev *gntbdev[];
 	
 int ntbdev_init(struct ntbeth_ntbdev *pdev, int bar23_size, int bar45_size, int rx_int_doorbell_num);
 int ntbdev_cleanup(struct ntbeth_ntbdev *pdev);
@@ -156,6 +158,8 @@ void ntbdev_send_close_interrupt(struct ntbeth_ntbdev *pdev);
 void ntbdev_send_doorbell(struct ntbeth_ntbdev *pdev, unsigned short doorbell_value);
 int ntbdev_get_bus_address_for_local_buffers(struct ntbeth_ntbdev *pdev, void *virt_addr, int size, dma_addr_t *bus_address);
 int ntbdev_get_bus_address_for_remote_buffers(struct ntbeth_ntbdev *pdev, void *virt_addr, int size, dma_addr_t *bus_address);
+int ntbdev_read_scratch_pad_one(struct ntbeth_ntbdev *pdev, int spadnum, unsigned int *value);
+int ntbdev_write_scratch_pad_one(struct ntbeth_ntbdev *pdev, int spadnum, unsigned int value);
 	
 	
 #endif

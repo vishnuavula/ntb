@@ -69,6 +69,14 @@ extern "C"
 
 /* Tyedefition for an element of ciruclar queue
  */
+
+struct q_tx_fields
+{
+	unsigned int put_index;
+	unsigned int cq_size;
+	unsigned int avail_put_index;
+};
+
 struct q_element
 {
   unsigned int pktlen;
@@ -89,12 +97,14 @@ struct q_element
 	unsigned int avail_put_index;
 	unsigned int avail_get_index;
 	unsigned int signature;
+	unsigned int tx_db_count;
+	unsigned int rx_db_count;
 	struct q_element qarray[1];
 };
 
-inline  unsigned int cq_avail_put_index(struct cq *cq);
+inline  unsigned int cq_avail_put_index(struct cq **cq);
 inline unsigned int cq_avail_get_index(struct cq *cq);
-inline  unsigned int cq_put_index(struct cq *cq);
+inline  unsigned int cq_put_index(struct cq **cq);
 inline unsigned int cq_get_index(struct cq *cq);
 
 //Operations on the Circular Queue
@@ -111,16 +121,16 @@ inline int is_cq_empty(struct cq *pCq);
 inline int is_cq_full(struct cq *pCq);
 
 //just returns the current put entry address, no changes to the q state, except avail_put ptr
-inline void *cq_get_current_put_entry_loc(struct cq *cq);
+inline void *cq_get_current_put_entry_loc(struct cq **cq);
 
 //just returns the current get entry address, no changes to the q state   except avail_get ptr
 inline void *cq_get_current_get_entry_loc(struct cq *cq);
 
 // updates get ptr
-inline int cq_update_get_ptr(struct cq *cq);
+inline int cq_update_get_ptr(struct cq **pcq);
 
 // updates put ptr
-inline int cq_update_put_ptr(struct cq *cq);
+inline int cq_update_put_ptr(struct cq **cq);
 
 inline int cq_validate(struct cq *cq);
 
@@ -131,7 +141,7 @@ inline int cq_calculate_num_entries(int size);
 inline void cq_dump_debug_data(struct cq *cq, char *fmtstr);
 
 inline int cq_is_buf_ready(struct cq *cq);
-inline int cq_is_buf_avail(struct cq *cq);
+inline int cq_is_buf_avail(struct cq **cq);
 inline void * cq_get_buffer(struct cq *cq, int i);
 
 #ifdef __cplusplus

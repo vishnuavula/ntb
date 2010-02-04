@@ -94,8 +94,10 @@ void ntbeth_copier_memcpy(char *dest, char *src, int length)
 	int i;
 	psrc = (unsigned long long *)src;
 	pdest = (unsigned long long *)dest;
-	for(i=0; i < num_longs; i++)
+	for(i=0; i < num_longs; i++) {
 		pdest[i]  = psrc[i];
+		//psrc[i]  = pdest[i];
+	}
 	memcpy(pdest + i, psrc + i, length%8);
 }
 int ntbeth_copier_copy_to_skb(struct ntbeth_copier_info *pcopier, char *pmsg, int length, struct sk_buff *skb, dma_addr_t *dma_addr, void (*pcallback)(void *), void *pref)
@@ -109,7 +111,7 @@ int ntbeth_copier_copy_to_skb(struct ntbeth_copier_info *pcopier, char *pmsg, in
 			printk("Unable to obtain PCI address for the given src address\n");
 			return NTBETH_FAIL;
 		}
-		if(ntbdev_get_bus_address(NULL, skb_put(skb,length), length, &dest)) {
+		if(ntbdev_get_bus_address(pcopier->chan->device->dev, skb_put(skb,length), length, &dest)) {
 			printk("Unable to obtain PCI address for the given dest address\n");
 			return NTBETH_FAIL;
 		}
@@ -145,7 +147,7 @@ int ntbeth_copier_copy_from_skb(struct ntbeth_copier_info *pcopier, struct sk_bu
 	
 	if(pcopier->use_cb3_dma_engine)
 	{
-		if(ntbdev_get_bus_address(NULL, skb->data, length, &src)) {
+		if(ntbdev_get_bus_address(pcopier->chan->device->dev, skb->data, length, &src)) {
 			printk("Unable to obtain PCI address for the given src address\n");
 			return NTBETH_FAIL;
 		}

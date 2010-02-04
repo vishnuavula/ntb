@@ -56,7 +56,7 @@
  *   OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  * 
  * 
- *  version: Embedded.Release.L.0.5.1-2
+ *  version: Embedded.Release.L.0.5.2-70
  ****************************************************************************/
 
 
@@ -413,18 +413,17 @@ uint64_t address)
 	if (device == NULL)
 		return -EINVAL;
 
-	if (address != 0) {
-		if (bar == NTB_BAR_23) {
-			ntb_lib_write_64(device->mm_regs,
-			device->bar_23_translate_offset, address);
-			return SUCCESS;
-		} else if (bar == NTB_BAR_45) {
-			ntb_lib_write_64(device->mm_regs,
-			device->bar_45_translate_offset, address);
-			return SUCCESS;
-		}
-
+	if (bar == NTB_BAR_23) {
+		ntb_lib_write_64(device->mm_regs,
+		device->bar_23_translate_offset, address);
+		return SUCCESS;
+	} else if (bar == NTB_BAR_45) {
+		ntb_lib_write_64(device->mm_regs,
+		device->bar_45_translate_offset, address);
+		return SUCCESS;
 	}
+
+
 
 	return -EPERM;
 }
@@ -737,9 +736,16 @@ int16_t ntb_get_link_status(ntb_client_handle_t handle)
 	link_status));
 
 
-	if (link_status & LINK_STATUS_ACTIVE)
+	if (link_status & LINK_STATUS_ACTIVE) {
 		device->link_status = LINK_UP;
-	else
+		if (device->device_id == NTB_CLASSIC_DEVICE_ID ||
+		device->device_id == NTB_B2B_DEVICE_ID) {
+			ntb_get_limit_settings(device->dev, NTB_BAR_23,
+				device, SECONDARY_CONFIG);
+			ntb_get_limit_settings(device->dev, NTB_BAR_45,
+					device, SECONDARY_CONFIG);
+		}
+	} else
 		device->link_status = LINK_DOWN;
 
 	return device->link_status;
@@ -775,8 +781,6 @@ int32_t ntb_set_link_status(ntb_client_handle_t handle, enum link_t status)
 
 		read_status = ~read_status & status;
 
-		NTB_DEBUG_PRINT(("NTB: Read Link Status: LinkStatus: 0x%x\n",
-		read_status));
 
 		NTB_DEBUG_PRINT(("NTB: Setting Link Status 0x%x\n",
 		read_status));
@@ -977,7 +981,7 @@ int32_t ntb_reset_policy(ntb_client_handle_t handle)
  * Return Values: 0 successful,
  * -EINVAL wrong parameter supplied,
 *****************************************************************************/
-uint16_t ntb_get_policy(ntb_client_handle_t handle)
+int16_t ntb_get_policy(ntb_client_handle_t handle)
 {
 	int16_t ret               = 0;
 	struct ntb_device *device = NULL;
@@ -1312,7 +1316,7 @@ enum ntb_bar_t bar)
  * -EINVAL wrong parameter supplied
 *****************************************************************************/
 int32_t ntb_write_remote_doorbell_mask(ntb_client_handle_t handle,
-uint32_t mask)
+uint16_t mask)
 {
 	struct ntb_device *device = NULL;
 
@@ -1339,7 +1343,7 @@ uint32_t mask)
  * Return Values: 0 successful,
  * -EINVAL wrong parameter supplied
 *****************************************************************************/
-uint16_t ntb_read_remote_doorbell_mask(ntb_client_handle_t handle)
+int16_t ntb_read_remote_doorbell_mask(ntb_client_handle_t handle)
 {
 	struct ntb_device *device = NULL;
 	uint16_t mask = 0;
@@ -1380,13 +1384,18 @@ uint64_t value)
 	if (device == NULL)
 		return -EINVAL;
 
-	NTB_DEBUG_PRINT(("NTB: INSIDE NTB_WRITE_SECONDARY_LIMIT dev %p \n",
+	NTB_DEBUG_PRINT(("NTB: INSIDE NTB_WRITE_REMOTE_LIMIT dev %p \n",
 	device));
 
 	if (handle & NTB_BAR_23)
 		limit_setting = device->secondary_limit_max_23;
 	else if (handle & NTB_BAR_45)
 		limit_setting = device->secondary_limit_max_45;
+
+	NTB_DEBUG_PRINT(("NTB: LIMIT SETTING %Lx \n",
+	limit_setting));
+	NTB_DEBUG_PRINT(("NTB: Value %Lx \n",
+	value));
 
 	if (limit_setting <= 0)
 		return -EPERM;
@@ -1406,15 +1415,22 @@ uint64_t value)
 	}
 
 	if (bar == NTB_BAR_23) {
+		NTB_DEBUG_PRINT(("NTB: WRITING LIMIT %Lx\n",
+				(value
+		+ device->secondary_limit_base_23)));
 		ntb_lib_write_64(device->mm_regs,
 		NTB_SBAR_23_LIMIT_OFFSET, value
 		+ device->secondary_limit_base_23);
 		return SUCCESS;
 	} else if (bar == NTB_BAR_45) {
+		NTB_DEBUG_PRINT(("NTB: WRITING LIMIT %Lx\n",
+		(value + device->secondary_limit_base_23)));
 		ntb_lib_write_64(device->mm_regs,
 		NTB_SBAR_45_LIMIT_OFFSET, value
 		+ device->secondary_limit_base_45);
 		return SUCCESS;
+	} else {
+		return -EINVAL;
 	}
 
 	return -EPERM;
@@ -1434,7 +1450,7 @@ uint64_t value)
 int64_t ntb_read_remote_limit(ntb_client_handle_t handle,
 enum ntb_bar_t bar)
 {
-	int64_t limit = 0;
+	uint64_t limit = 0;
 	struct ntb_device *device = NULL;
 	int64_t ret = -EINVAL;
 
@@ -1450,12 +1466,16 @@ enum ntb_bar_t bar)
 		limit = ntb_lib_read_64(device->mm_regs,
 		NTB_SBAR_23_LIMIT_OFFSET);
 		limit -= device->secondary_limit_base_23;
+		NTB_DEBUG_PRINT(("NTB: INSIDE NTB_READ_SECONDARY_LIMIT  %Lx \n",
+		limit));
 		return limit;
 
 	} else if (bar == NTB_BAR_45) {
 		limit = ntb_lib_read_64(device->mm_regs,
 		NTB_SBAR_45_LIMIT_OFFSET);
 		limit -= device->secondary_limit_base_45;
+		NTB_DEBUG_PRINT(("NTB: INSIDE NTB_READ_SECONDARY_LIMIT  %Lx \n",
+		limit));
 		return limit;
 	}
 

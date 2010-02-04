@@ -56,7 +56,7 @@
 *   OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 * 
 * 
-*  version: Embedded.Release.L.0.5.1-2
+*  version: Embedded.Release.L.0.5.2-70
 ******************************************************************************/
 
 /* This file defines the API exposed by the NTB Driver */
@@ -404,7 +404,7 @@ int32_t ntb_reset_policy(ntb_client_handle_t handle);
  * of the doorbell. Each client can add policy by using the
  * the function parameters to indicate specific bits.
  */
-uint16_t ntb_get_policy(ntb_client_handle_t handle);
+int16_t ntb_get_policy(ntb_client_handle_t handle);
 
 /**
  * ntb_get_next_bdf - returns next available BDF/BAR combination.
@@ -477,14 +477,14 @@ enum ntb_bar_t bar);
  *
  */
 int32_t ntb_write_remote_doorbell_mask(ntb_client_handle_t handle,
-uint32_t mask);
+uint16_t mask);
 
 /**
  * ntb_read_remote_doorbell_mask - returns secondary side's mask values.
  * @handle: handle granted by ntb_client_register
  *
  */
-uint16_t ntb_read_remote_doorbell_mask(ntb_client_handle_t handle);
+int16_t ntb_read_remote_doorbell_mask(ntb_client_handle_t handle);
 
 /**
  * ntb_write_remote_limit - sets secondary limit register.
@@ -512,7 +512,7 @@ enum ntb_bar_t bar);
  *
  * Used from the primary side.
  */
-uint64_t ntb_read_remote_bar(ntb_client_handle_t handle, enum ntb_bar_t bar);
+int64_t ntb_read_remote_bar(ntb_client_handle_t handle, enum ntb_bar_t bar);
 
 /**
  * ntb_write_remote_bar- writes base address register.
@@ -591,7 +591,7 @@ struct ntb_api_export {
 
 	int32_t (*ntb_reset_policy)(ntb_client_handle_t handle);
 
-	uint16_t (*ntb_get_policy)(ntb_client_handle_t handle);
+	int16_t (*ntb_get_policy)(ntb_client_handle_t handle);
 
 	int32_t (*ntb_get_next_bdf)(uint16_t *next_bdf,
 	uint32_t *next_bar);
@@ -608,6 +608,25 @@ struct ntb_api_export {
 	uint64_t address);
 
 	int64_t (*ntb_read_remote_translate)(ntb_client_handle_t handle,
+	enum ntb_bar_t bar);
+
+	int32_t (*ntb_write_remote_doorbell_mask)(ntb_client_handle_t handle,
+	uint16_t mask);
+
+	int16_t (*ntb_read_remote_doorbell_mask)(ntb_client_handle_t handle);
+
+	int32_t (*ntb_write_remote_limit)(ntb_client_handle_t handle,
+	enum ntb_bar_t bar,
+	uint64_t value);
+
+	int64_t (*ntb_read_remote_limit)(ntb_client_handle_t handle,
+	enum ntb_bar_t bar);
+
+	int32_t (*ntb_write_remote_bar)(ntb_client_handle_t handle,
+	enum ntb_bar_t bar,
+	uint64_t address);
+
+	int64_t (*ntb_read_remote_bar)(ntb_client_handle_t handle,
 	enum ntb_bar_t bar);
 
 };

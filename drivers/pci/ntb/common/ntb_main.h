@@ -56,7 +56,7 @@
 *   OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 * 
 * 
-*  version: Embedded.Release.L.0.5.1-2
+*  version: Embedded.Release.L.0.5.2-70
 *****************************************************************************/
 
 #ifndef NTB_MAIN_H_
