@@ -53,6 +53,8 @@ extern int ioat_ring_alloc_order;
  * @ring_lock: protects ring attributes
  * @valcount: number of pending validate operations (ioat3.2+ only)
  * @poll_work: poll for validate operation completion (ioat3.2+ only)
+ * @pq_scratch: spare buffer for restarting ioat3.2 channels after error
+ * @pq_scratch_dma: dma address of @pq_scratch
  */
 struct ioat2_dma_chan {
 	struct ioat_chan_common base;
@@ -66,6 +68,8 @@ struct ioat2_dma_chan {
 	spinlock_t ring_lock;
 	u16 valcount;
 	struct work_struct poll_work;
+	void *pq_scratch;
+	dma_addr_t pq_scratch_dma;
 };
 
 static inline struct ioat2_dma_chan *to_ioat2_chan(struct dma_chan *c)
