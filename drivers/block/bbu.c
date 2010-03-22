@@ -597,10 +597,11 @@ static void __release_ent(struct bbu_cache_conf *conf, struct bbu_cache_ent *ent
 static void bbu_release_ent(struct bbu_cache_ent *ent)
 {
 	struct bbu_cache_conf *conf = ent->conf;
+	unsigned long flags;
 
-	spin_lock_irq(&conf->cache_lock);
+	spin_lock_irqsave(&conf->cache_lock, flags);
 	__release_ent(conf, ent);
-	spin_unlock_irq(&conf->cache_lock);
+	spin_unlock_irqrestore(&conf->cache_lock, flags);
 }
 
 static void bbu_blk_set_pfn(struct bbu_cache_conf *conf, struct bbu_io_ent *blk, unsigned long pfn)
