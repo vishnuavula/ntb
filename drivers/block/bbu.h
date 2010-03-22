@@ -220,13 +220,16 @@ struct bbu_io_ent {
 	#define BLK_F_DIRTY 1
 	#define BLK_F_UPTODATE 2
 	#define BLK_F_LOCKED 3
-	#define BLK_F_ReadError 4
-	#define BLK_F_Overlap 5
-	#define BLK_F_Wantfill 6
-	#define BLK_F_Wantdrain 7
-	#define BLK_F_Wantread 8
-	#define BLK_F_Wantwrite 9
+	#define BLK_F_BYPASS 4
+	#define BLK_F_ReadError 5
+	#define BLK_F_Overlap 6
+	#define BLK_F_Wantfill 7
+	#define BLK_F_Wantdrain 8
+	#define BLK_F_Wantread 9
+	#define BLK_F_Wantwrite 10
+
 	unsigned long flags;
+	atomic_t bypass;
 };
 
 /**

@@ -155,6 +155,7 @@ static int alloc_bbu_cache(struct bbu_cache_conf *conf)
 				blk = &ent->blk[j];
 				blk->req = bio_alloc(GFP_KERNEL, blk_pages);
 				blk->pfn = BBU_INVALID_PFN;
+				atomic_set(&blk->bypass, 0);
 				if (!blk->req)
 					break;
 			}
@@ -960,8 +961,14 @@ static void bbu_merge_dirty(struct bbu_cache_conf *conf, struct bio *bi)
 			(unsigned long long) logical_sector,
 			toread ? "hit" : "miss");
 
-		if (ent)
+		if (ent) {
 			bbu_release_ent(ent);
+
+			spin_lock(&ent->lock);
+			if (blk && atomic_dec_and_test(&blk->bypass))
+				clear_bit(BLK_F_BYPASS, &blk->flags);
+			spin_unlock(&ent->lock);
+		}
 
 		/* signal the completion of the bypass read for this block */
 		if (toread) {
@@ -1083,18 +1090,30 @@ static int bbu_make_request(struct request_queue *q, struct bio *bi)
 		blk = &ent->blk[blk_idx];
 
 		/* skip add_ent_bio if there is no recent data in the cache */
-		if (bypass &&
-		    (!ent || !(test_bit(BLK_F_DIRTY, &blk->flags) ||
-			       test_bit(BLK_F_UPTODATE, &blk->flags)))) {
-			if (ent)
-				bbu_release_ent(ent);
-			miss++;
-			finish_wait(&conf->wait_for_overlap, &w);
-			continue;
+		if (bypass) {
+			if (!ent || !(test_bit(BLK_F_DIRTY, &blk->flags) ||
+			    test_bit(BLK_F_UPTODATE, &blk->flags))) {
+				if (ent)
+					bbu_release_ent(ent);
+				miss++;
+				finish_wait(&conf->wait_for_overlap, &w);
+				continue;
+			}
+
+			spin_lock(&ent->lock);
+			atomic_inc(&blk->bypass);
+			set_bit(BLK_F_BYPASS, &blk->flags);
+			spin_unlock(&ent->lock);
 		}
 
 		if (!add_ent_bio(ent, bi, blk_idx)) {
 			bbu_release_ent(ent);
+
+			spin_lock(&ent->lock);
+			if (bypass && atomic_dec_and_test(&blk->bypass))
+				clear_bit(BLK_F_BYPASS, &blk->flags);
+			spin_unlock(&ent->lock);
+
 			schedule();
 			goto retry;
 		}
@@ -1912,7 +1931,8 @@ static void bbu_handle_ent(struct bbu_cache_ent *ent)
 		 * ops_complete_biofill is guaranteed to be inactive
 		 */
 		if (test_bit(BLK_F_UPTODATE, &blk->flags) && blk->toread &&
-		    !test_bit(BBU_ENT_BIOFILL_RUN, &ent->state))
+		    !test_bit(BBU_ENT_BIOFILL_RUN, &ent->state) &&
+		    !test_bit(BLK_F_BYPASS, &blk->flags))
 			set_bit(BLK_F_Wantfill, &blk->flags);
 
 		/* now count some things */
