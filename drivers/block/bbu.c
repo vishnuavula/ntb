@@ -454,6 +454,7 @@ static void init_blk(struct bbu_cache_conf *conf, struct bbu_cache_ent *ent, int
 		return;
 
 	blk->state = BBU_unassociated;
+	blk->flags = 0;
 	BUG_ON(bbu_desc_to_sector(conf, blk_sector | blk->state) != blk_sector);
 	write_desc(blk_sector | blk->state, conf, blk);
 }
@@ -488,7 +489,9 @@ static void init_ent(struct bbu_cache_ent *ent, sector_t sector)
 
 		if (blk->toread || blk->read || blk->towrite || blk->written ||
 		    bbu_desc_to_state(desc) != blk->state ||
-		    is_blk_active(blk)) {
+		    is_blk_active(blk) ||
+		    test_bit(BLK_F_LOCKED, &blk->flags) ||
+		    test_bit(BLK_F_BYPASS, &blk->flags)) {
 			dev_err(dev,
 				"%s: %s ent %llx blk %d %p %p %p %p %d(%d)\n",
 				conf->name, __func__,
@@ -2002,6 +2005,7 @@ static void bbu_handle_ent(struct bbu_cache_ent *ent)
 
 	/* allow new writes into the cache */
 	if (s.to_write && s.locked == 0 &&
+	    !test_bit(BBU_ENT_WRITEBACK, &ent->state) &&
 	    !test_and_set_bit(BBU_ENT_BIODRAIN_RUN, &ent->state))
 		handle_ent_dirty(ent, &s);
 
