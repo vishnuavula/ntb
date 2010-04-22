@@ -1003,7 +1003,7 @@ static int bbu_make_request(struct request_queue *q, struct bio *bi)
 				    conf->cache_lock, /* nothing */);
 
 	conf->requesters++;
-	if (unlikely(bio_barrier(bi))) {
+	if (unlikely(bio_rw_flagged(bi, BIO_RW_BARRIER))) {
 		conf->barrier_active = 1;
 		wait_event_lock_irq(conf->wait_for_ent,
 				    conf->requesters == 1 &&

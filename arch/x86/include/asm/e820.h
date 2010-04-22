@@ -50,7 +50,7 @@
 /* protected RAM interpreted type, precludes the need to pass extended
  * attributes to every e820 routine that looks at 'type'
  */
-#define E820_PROTECTED_KERN	  129
+#define E820_PROTECTED_KERN	  6
 
 #ifndef __ASSEMBLY__
 #include <linux/types.h>
@@ -109,7 +109,7 @@ static inline void e820_set_adr_resource(struct resource *res)
 		}
 }
 #else
-static inline bool is_e820_protected(struct e820entry *ei)
+static inline bool is_e820_protected(struct e820ext *ex)
 {
 	return false;
 }
