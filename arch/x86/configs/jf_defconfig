@@ -1,7 +1,7 @@
 #
 # Automatically generated make config: don't edit
-# Linux kernel version: 2.6.32.1-jf19
-# Thu Dec 17 14:32:29 2009
+# Linux kernel version: 2.6.32.11-jf22
+# Thu Apr 22 17:06:54 2010
 #
 CONFIG_64BIT=y
 # CONFIG_X86_32 is not set
@@ -303,7 +303,6 @@ CONFIG_MICROCODE_INTEL=y
 CONFIG_MICROCODE_OLD_INTERFACE=y
 CONFIG_X86_MSR=y
 CONFIG_X86_CPUID=y
-# CONFIG_X86_CPU_DEBUG is not set
 CONFIG_ARCH_PHYS_ADDR_T_64BIT=y
 CONFIG_DIRECT_GBPAGES=y
 # CONFIG_NUMA is not set
