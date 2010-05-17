@@ -39,6 +39,7 @@
 #define to_ioat_desc(lh) container_of(lh, struct ioat_desc_sw, node)
 #define tx_to_ioat_desc(tx) container_of(tx, struct ioat_desc_sw, txd)
 #define to_dev(ioat_chan) (&(ioat_chan)->device->pdev->dev)
+#define to_pdev(ioat_chan) ((ioat_chan)->device->pdev)
 
 #define chan_num(ch) ((int)((ch)->reg_base - (ch)->device->reg_base) / 0x80)
 
@@ -97,6 +98,7 @@ struct ioat_chan_common {
 	#define IOAT_RESET_PENDING 2
 	#define IOAT_KOBJ_INIT_FAIL 3
 	#define IOAT_RESHAPE_PENDING 4
+	#define IOAT_ARM_FAIL 5
 	struct timer_list timer;
 	#define COMPLETION_TIMEOUT msecs_to_jiffies(100)
 	#define IDLE_TIMEOUT msecs_to_jiffies(2000)
@@ -313,10 +315,24 @@ static inline bool is_ioat_suspended(unsigned long status)
 	return ((status & IOAT_CHANSTS_STATUS) == IOAT_CHANSTS_SUSPENDED);
 }
 
+static inline bool is_ioat_armed(unsigned long status)
+{
+	return ((status & IOAT_CHANSTS_STATUS) == IOAT_CHANSTS_ARMED);
+}
+
+static inline void ioat_check_armed(struct ioat_chan_common *chan)
+{
+	u64 status = ioat_chansts(chan);
+
+	if (!is_ioat_armed(status) &&
+	    !test_and_set_bit(IOAT_ARM_FAIL, &chan->state))
+		dev_WARN(to_dev(chan), "failed to arm channel\n");
+}
+
 /* channel was fatally programmed */
 static inline bool is_ioat_bug(unsigned long err)
 {
-	return !!err;
+	return !!(err & ~(IOAT_CHANERR_XOR_P_OR_CRC_ERR|IOAT_CHANERR_XOR_Q_ERR));
 }
 
 static inline void ioat_unmap(struct pci_dev *pdev, dma_addr_t addr, size_t len,
