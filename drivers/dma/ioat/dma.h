@@ -202,19 +202,19 @@ struct ioat_desc_sw {
 
 static inline void
 __dump_desc_dbg(struct ioat_chan_common *chan, struct ioat_dma_descriptor *hw,
-		struct dma_async_tx_descriptor *tx, int id)
+		struct dma_async_tx_descriptor *tx)
 {
 	struct device *dev = to_dev(chan);
 
-	dev_dbg(dev, "desc[%d]: (%#llx->%#llx) cookie: %d flags: %#x"
-		" ctl: %#x (op: %d int_en: %d compl: %d)\n", id,
+	dev_dbg(dev, "desc: (%#llx->%#llx) cookie: %d flags: %#x"
+		" ctl: %#x (op: %d int_en: %d compl: %d)\n",
 		(unsigned long long) tx->phys,
 		(unsigned long long) hw->next, tx->cookie, tx->flags,
 		hw->ctl, hw->ctl_f.op, hw->ctl_f.int_en, hw->ctl_f.compl_write);
 }
 
 #define dump_desc_dbg(c, d) \
-	({ if (d) __dump_desc_dbg(&c->base, d->hw, &d->txd, desc_id(d)); 0; })
+	({ if (d) __dump_desc_dbg(&c->base, d->hw, &d->txd); 0; })
 
 static inline void ioat_set_tcp_copy_break(unsigned long copybreak)
 {
