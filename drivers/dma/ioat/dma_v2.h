@@ -53,6 +53,8 @@ extern int ioat_ring_alloc_order;
  * @produce: number of descriptors to produce at submit time
  * @ring: software ring buffer implementation of hardware ring
  * @prep_lock: serializes descriptor preparation (producers)
+ * @valcount: number of pending validate operations (ioat3.2+ only)
+ * @poll_work: poll for validate operation completion (ioat3.2+ only)
  */
 struct ioat2_dma_chan {
 	struct ioat_chan_common base;
@@ -65,6 +67,8 @@ struct ioat2_dma_chan {
 	u16 produce;
 	struct ioat_ring_ent **ring;
 	spinlock_t prep_lock;
+	u16 valcount;
+	struct work_struct poll_work;
 };
 
 static inline struct ioat2_dma_chan *to_ioat2_chan(struct dma_chan *c)

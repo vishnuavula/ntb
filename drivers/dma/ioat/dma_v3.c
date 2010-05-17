@@ -64,6 +64,10 @@
 #include "dma.h"
 #include "dma_v2.h"
 
+static struct workqueue_struct *poll_queue;
+static int poll_queue_users;
+static DEFINE_MUTEX(poll_queue_mutex);
+
 /* ioat hardware assumes at least two sources for raid operations */
 #define src_cnt_to_sw(x) ((x) + 2)
 #define src_cnt_to_hw(x) ((x) - 2)
@@ -268,10 +272,12 @@ static void __cleanup(struct ioat2_dma_chan *ioat, unsigned long phys_complete)
 	active = ioat2_ring_active(ioat);
 	for (i = 0; i < active && !seen_current; i++) {
 		struct dma_async_tx_descriptor *tx;
+		struct ioat_dma_descriptor *hw;
 
 		smp_read_barrier_depends();
 		prefetch(ioat2_get_ring_ent(ioat, idx + i + 1));
 		desc = ioat2_get_ring_ent(ioat, idx + i);
+		hw = desc->hw;
 		dump_desc_dbg(ioat, desc);
 		tx = &desc->txd;
 		if (tx->cookie) {
@@ -286,6 +292,14 @@ static void __cleanup(struct ioat2_dma_chan *ioat, unsigned long phys_complete)
 
 		if (tx->phys == phys_complete)
 			seen_current = true;
+
+		if ((hw->ctl_f.op == IOAT_OP_PQ_VAL ||
+		     hw->ctl_f.op == IOAT_OP_XOR_VAL) &&
+		     --ioat->valcount == 0) {
+			dev_dbg(to_dev(chan), "%s: cancel validate-pending\n",
+				__func__);
+			clear_bit(IOAT3_VAL_PENDING, &chan->state);
+		}
 
 		/* skip extended descriptors */
 		if (desc_has_ext(desc)) {
@@ -528,7 +542,7 @@ __ioat3_prep_xor_lock(struct dma_chan *c, enum sum_check_flags *result,
 	struct ioat_dma_descriptor *hw;
 	int num_descs, with_ext, idx, i;
 	u32 offset = 0;
-	u8 op = result ? IOAT_OP_XOR_VAL : IOAT_OP_XOR;
+	u8 op;
 
 	BUG_ON(src_cnt < 2);
 
@@ -551,6 +565,19 @@ __ioat3_prep_xor_lock(struct dma_chan *c, enum sum_check_flags *result,
 		idx = ioat->head;
 	else
 		return NULL;
+
+	/* are we running a validate operation? */
+	if (result) {
+		struct ioat_chan_common *chan = &ioat->base;
+
+		op = IOAT_OP_XOR_VAL;
+		if (!test_and_set_bit(IOAT3_VAL_PENDING, &chan->state))
+			queue_work(poll_queue, &ioat->poll_work);
+		/* don't count the extended descriptors */
+		ioat->valcount += num_descs >> with_ext;
+	} else
+		op = IOAT_OP_XOR;
+
 	i = 0;
 	do {
 		struct ioat_raw_descriptor *descs[2];
@@ -666,8 +693,8 @@ __ioat3_prep_pq_lock(struct dma_chan *c, enum sum_check_flags *result,
 	struct ioat_pq_ext_descriptor *pq_ex = NULL;
 	struct ioat_dma_descriptor *hw;
 	u32 offset = 0;
-	u8 op = result ? IOAT_OP_PQ_VAL : IOAT_OP_PQ;
 	int i, s, idx, with_ext, num_descs;
+	u8 op;
 
 	dev_dbg(to_dev(chan), "%s\n", __func__);
 	/* the engine requires at least two sources (we provide
@@ -697,6 +724,19 @@ __ioat3_prep_pq_lock(struct dma_chan *c, enum sum_check_flags *result,
 		idx = ioat->head;
 	else
 		return NULL;
+
+	/* are we running a validate operation? */
+	if (result) {
+		struct ioat_chan_common *chan = &ioat->base;
+
+		op = IOAT_OP_PQ_VAL;
+		if (!test_and_set_bit(IOAT3_VAL_PENDING, &chan->state))
+			queue_work(poll_queue, &ioat->poll_work);
+		/* don't count the extended descriptors */
+		ioat->valcount += num_descs >> with_ext;
+	} else
+		op = IOAT_OP_PQ;
+
 	i = 0;
 	do {
 		struct ioat_raw_descriptor *descs[2];
@@ -1195,6 +1235,114 @@ static int ioat3_reset_hw(struct ioat_chan_common *chan)
 	return ioat2_reset_sync(chan, msecs_to_jiffies(200));
 }
 
+/* workaround the lack of asynchronous notification of validate errors
+ * by polling for halts until all validate-ops are completed.  If we
+ * poll for 5 seconds without an error start sleeping because the array
+ * is mostly clean and the channel does not need mothering.
+ */
+static void ioat3_poll_work(struct work_struct *work)
+{
+	static unsigned long last_error;
+	struct ioat2_dma_chan *ioat;
+	struct ioat_chan_common *chan;
+	u64 status;
+
+	ioat = container_of(work, struct ioat2_dma_chan, poll_work);
+	chan = &ioat->base;
+
+	status = ioat_chansts(chan);
+
+	dev_dbg(to_dev(chan), "%s: channel status: %llx\n", __func__, status);
+
+	if (is_ioat_halted(status)) {
+		ioat3_timer_event((unsigned long) &chan->common);
+		last_error = jiffies;
+	}
+
+	if (last_error &&
+	    time_after(jiffies, last_error + msecs_to_jiffies(5000)))
+		last_error = 0;
+
+	if (last_error == 0)
+		msleep(10);
+	else
+		cond_resched();
+
+	if (test_bit(IOAT3_VAL_PENDING, &chan->state))
+		queue_work(poll_queue, &ioat->poll_work);
+}
+
+static int ioat3_enumerate_channels(struct ioatdma_device *device)
+{
+	struct dma_device *dma = &device->common;
+	struct dma_chan *c;
+	int count;
+
+	count = ioat2_enumerate_channels(device);
+	if (count == 0)
+		return 0;
+
+	list_for_each_entry(c, &dma->channels, device_node) {
+		struct ioat2_dma_chan *ioat = to_ioat2_chan(c);
+
+		INIT_WORK(&ioat->poll_work, ioat3_poll_work);
+	}
+
+	return count;
+}
+
+static int request_poll_queue(struct dma_chan *c)
+{
+	struct dma_device *dma = c->device;
+	int err = 0;
+
+	mutex_lock(&poll_queue_mutex);
+	if (dma_has_cap(DMA_PQ_VAL, dma->cap_mask) ||
+	    dma_has_cap(DMA_XOR_VAL, dma->cap_mask)) {
+		if (!poll_queue)
+			poll_queue = create_singlethread_workqueue("ioat-poll");
+
+		if (!poll_queue)
+			err = -ENOMEM;
+		else
+			poll_queue_users++;
+	}
+	mutex_unlock(&poll_queue_mutex);
+
+	return err;
+}
+
+static void release_poll_queue(struct dma_chan *c)
+{
+	struct dma_device *dma = c->device;
+
+	mutex_lock(&poll_queue_mutex);
+	if (dma_has_cap(DMA_PQ_VAL, dma->cap_mask) ||
+	    dma_has_cap(DMA_XOR_VAL, dma->cap_mask)) {
+		if (--poll_queue_users == 0) {
+			destroy_workqueue(poll_queue);
+			poll_queue = NULL;
+		}
+		BUG_ON(poll_queue_users < 0);
+	}
+	mutex_unlock(&poll_queue_mutex);
+}
+
+static int ioat3_alloc_chan_resources(struct dma_chan *c)
+{
+	int err =  request_poll_queue(c);
+
+	if (err)
+		return err;
+	return ioat2_alloc_chan_resources(c);
+}
+
+static void ioat3_free_chan_resources(struct dma_chan *c)
+{
+	release_poll_queue(c);
+	ioat2_free_chan_resources(c);
+}
+
 int __devinit ioat3_dma_probe(struct ioatdma_device *device, int dca)
 {
 	struct pci_dev *pdev = device->pdev;
@@ -1206,14 +1354,14 @@ int __devinit ioat3_dma_probe(struct ioatdma_device *device, int dca)
 	int err;
 	u32 cap;
 
-	device->enumerate_channels = ioat2_enumerate_channels;
+	device->enumerate_channels = ioat3_enumerate_channels;
 	device->reset_hw = ioat3_reset_hw;
 	device->self_test = ioat3_dma_self_test;
 	dma = &device->common;
 	dma->device_prep_dma_memcpy = ioat2_dma_prep_memcpy_lock;
 	dma->device_issue_pending = ioat2_issue_pending;
-	dma->device_alloc_chan_resources = ioat2_alloc_chan_resources;
-	dma->device_free_chan_resources = ioat2_free_chan_resources;
+	dma->device_alloc_chan_resources = ioat3_alloc_chan_resources;
+	dma->device_free_chan_resources = ioat3_free_chan_resources;
 
 	dma_cap_set(DMA_INTERRUPT, dma->cap_mask);
 	dma->device_prep_dma_interrupt = ioat3_prep_interrupt_lock;
