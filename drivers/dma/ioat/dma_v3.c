@@ -694,6 +694,7 @@ __ioat3_prep_pq_lock(struct dma_chan *c, enum sum_check_flags *result,
 	struct ioat_dma_descriptor *hw;
 	u32 offset = 0;
 	int i, s, idx, with_ext, num_descs;
+	int completion_descs = 1;
 	u8 op;
 
 	dev_dbg(to_dev(chan), "%s\n", __func__);
@@ -717,15 +718,22 @@ __ioat3_prep_pq_lock(struct dma_chan *c, enum sum_check_flags *result,
 	/* completion writes from the raid engine may pass completion
 	 * writes from the legacy engine, so we need one extra null
 	 * (legacy) descriptor to ensure all completion writes arrive in
-	 * order.
+	 * order.  Also, if we are running a pq-validate operation there
+	 * is a chance the channel will halt in which case we need a
+	 * dummy pq operation to restart the channel
 	 */
+	if (result)
+		completion_descs = 2;
+
 	if (likely(num_descs) &&
-	    ioat2_check_space_lock(ioat, num_descs+1) == 0)
+	    ioat2_check_space_lock(ioat, num_descs + completion_descs) == 0)
 		idx = ioat->head;
 	else
 		return NULL;
 
-	/* are we running a validate operation? */
+	/* are we running a validate operation? Kick the poll loop to
+	 * watch for errors
+	 */
 	if (result) {
 		struct ioat_chan_common *chan = &ioat->base;
 
@@ -786,6 +794,28 @@ __ioat3_prep_pq_lock(struct dma_chan *c, enum sum_check_flags *result,
 		desc->result = result;
 	pq->ctl_f.fence = !!(flags & DMA_PREP_FENCE);
 	dump_pq_desc_dbg(ioat, desc, ext);
+
+	/* in the validate-fail case we need a pq descriptor to flush the channel */
+	if (result) {
+		struct ioat_raw_descriptor *descs[2];
+
+		compl_desc = ioat2_get_ring_ent(ioat, idx + i);
+		pq = compl_desc->pq;
+		descs[0] = (struct ioat_raw_descriptor *) pq;
+		descs[1] = NULL;
+
+		for (s = 0; s < 3; s++)
+			pq_set_src(descs, ioat->pq_scratch_dma, 0, 0, s);
+
+		pq->size = L1_CACHE_BYTES;
+		pq->p_addr = ioat->pq_scratch_dma;
+		pq->q_addr = ioat->pq_scratch_dma;
+		pq->ctl = 0;
+		pq->ctl_f.op = IOAT_OP_PQ;
+		pq->ctl_f.src_cnt = src_cnt_to_hw(3);
+		pq->ctl_f.q_disable = 1;
+		i++;
+	}
 
 	/* completion descriptor carries interrupt bit */
 	compl_desc = ioat2_get_ring_ent(ioat, idx + i);
@@ -1330,15 +1360,32 @@ static void release_poll_queue(struct dma_chan *c)
 
 static int ioat3_alloc_chan_resources(struct dma_chan *c)
 {
+	struct ioat2_dma_chan *ioat = to_ioat2_chan(c);
+	struct ioat_chan_common *chan = &ioat->base;
 	int err =  request_poll_queue(c);
+	void *scratch;
 
 	if (err)
 		return err;
+
+	scratch = dma_alloc_coherent(to_dev(chan), L1_CACHE_BYTES,
+				     &ioat->pq_scratch_dma, GFP_KERNEL);
+	if (!scratch) {
+		release_poll_queue(c);
+		return -ENOMEM;
+	}
+	ioat->pq_scratch = scratch;
+
 	return ioat2_alloc_chan_resources(c);
 }
 
 static void ioat3_free_chan_resources(struct dma_chan *c)
 {
+	struct ioat2_dma_chan *ioat = to_ioat2_chan(c);
+	struct ioat_chan_common *chan = &ioat->base;
+
+	dma_free_coherent(to_dev(chan), L1_CACHE_BYTES, ioat->pq_scratch,
+			  ioat->pq_scratch_dma);
 	release_poll_queue(c);
 	ioat2_free_chan_resources(c);
 }
