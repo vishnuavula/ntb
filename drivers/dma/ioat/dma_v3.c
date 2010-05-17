@@ -55,7 +55,6 @@
 /*
  * Support routines for v3+ hardware
  */
-
 #include <linux/pci.h>
 #include <linux/dmaengine.h>
 #include <linux/dma-mapping.h>
@@ -113,40 +112,45 @@ static void pq_set_src(struct ioat_raw_descriptor *descs[2],
 }
 
 static void ioat3_dma_unmap(struct ioat2_dma_chan *ioat,
-			    struct ioat_ring_ent *desc, int idx)
+			    struct ioat2_ring_ent *desc, int idx)
 {
 	struct ioat_chan_common *chan = &ioat->base;
 	struct pci_dev *pdev = chan->device->pdev;
 	size_t len = desc->len;
-	size_t offset = len - desc->hw->size;
+	struct ioat_dma_descriptor *hw = to_hw(desc);
+	size_t offset = len - hw->size;
 	struct dma_async_tx_descriptor *tx = &desc->txd;
 	enum dma_ctrl_flags flags = tx->flags;
 
-	switch (desc->hw->ctl_f.op) {
+	switch (hw->ctl_f.op) {
 	case IOAT_OP_COPY:
-		if (!desc->hw->ctl_f.null) /* skip 'interrupt' ops */
-			ioat_dma_unmap(chan, flags, len, desc->hw);
+		if (!hw->ctl_f.null) /* skip 'interrupt' ops */
+			ioat_dma_unmap(chan, flags, len, hw);
 		break;
 	case IOAT_OP_FILL: {
-		struct ioat_fill_descriptor *hw = desc->fill;
+		struct ioat_fill_descriptor *fill =
+			(struct ioat_fill_descriptor *)hw;
 
 		if (!(flags & DMA_COMPL_SKIP_DEST_UNMAP))
-			ioat_unmap(pdev, hw->dst_addr - offset, len,
+			ioat_unmap(pdev, fill->dst_addr - offset, len,
 				   PCI_DMA_FROMDEVICE, flags, 1);
 		break;
 	}
 	case IOAT_OP_XOR_VAL:
 	case IOAT_OP_XOR: {
-		struct ioat_xor_descriptor *xor = desc->xor;
-		struct ioat_ring_ent *ext;
+		struct ioat_xor_descriptor *xor =
+			(struct ioat_xor_descriptor *)hw;
+		struct ioat2_ring_ent *ext;
 		struct ioat_xor_ext_descriptor *xor_ex = NULL;
 		int src_cnt = src_cnt_to_sw(xor->ctl_f.src_cnt);
 		struct ioat_raw_descriptor *descs[2];
 		int i;
 
 		if (src_cnt > 5) {
+			struct ioat_dma_descriptor *hw_ext;
 			ext = ioat2_get_ring_ent(ioat, idx + 1);
-			xor_ex = ext->xor_ex;
+			hw_ext = to_hw(ext);
+			xor_ex = (struct ioat_xor_ext_descriptor *)hw;
 		}
 
 		if (!(flags & DMA_COMPL_SKIP_SRC_UNMAP)) {
@@ -174,16 +178,20 @@ static void ioat3_dma_unmap(struct ioat2_dma_chan *ioat,
 	}
 	case IOAT_OP_PQ_VAL:
 	case IOAT_OP_PQ: {
-		struct ioat_pq_descriptor *pq = desc->pq;
-		struct ioat_ring_ent *ext;
+		struct ioat_pq_descriptor *pq =
+			(struct ioat_pq_descriptor *)hw;
+		struct ioat2_ring_ent *ext;
 		struct ioat_pq_ext_descriptor *pq_ex = NULL;
 		int src_cnt = src_cnt_to_sw(pq->ctl_f.src_cnt);
 		struct ioat_raw_descriptor *descs[2];
 		int i;
 
 		if (src_cnt > 3) {
+			struct ioat_dma_descriptor *hw_ext;
+
 			ext = ioat2_get_ring_ent(ioat, idx + 1);
-			pq_ex = ext->pq_ex;
+			hw_ext = to_hw(ext);
+			pq_ex = (struct ioat_pq_ext_descriptor *)hw_ext;
 		}
 
 		/* in the 'continue' case don't unmap the dests as sources */
@@ -226,23 +234,25 @@ static void ioat3_dma_unmap(struct ioat2_dma_chan *ioat,
 	}
 	default:
 		dev_err(&pdev->dev, "%s: unknown op type: %#x\n",
-			__func__, desc->hw->ctl_f.op);
+			__func__, hw->ctl_f.op);
 	}
 }
 
-static bool desc_has_ext(struct ioat_ring_ent *desc)
+static bool desc_has_ext(struct ioat2_ring_ent *desc)
 {
-	struct ioat_dma_descriptor *hw = desc->hw;
+	struct ioat_dma_descriptor *hw = to_hw(desc);
 
 	if (hw->ctl_f.op == IOAT_OP_XOR ||
 	    hw->ctl_f.op == IOAT_OP_XOR_VAL) {
-		struct ioat_xor_descriptor *xor = desc->xor;
+		struct ioat_xor_descriptor *xor =
+			(struct ioat_xor_descriptor *)hw;
 
 		if (src_cnt_to_sw(xor->ctl_f.src_cnt) > 5)
 			return true;
 	} else if (hw->ctl_f.op == IOAT_OP_PQ ||
 		   hw->ctl_f.op == IOAT_OP_PQ_VAL) {
-		struct ioat_pq_descriptor *pq = desc->pq;
+		struct ioat_pq_descriptor *pq =
+			(struct ioat_pq_descriptor *)hw;
 
 		if (src_cnt_to_sw(pq->ctl_f.src_cnt) > 3)
 			return true;
@@ -261,7 +271,7 @@ static bool desc_has_ext(struct ioat_ring_ent *desc)
 static void __cleanup(struct ioat2_dma_chan *ioat, unsigned long phys_complete)
 {
 	struct ioat_chan_common *chan = &ioat->base;
-	struct ioat_ring_ent *desc;
+	struct ioat2_ring_ent *desc;
 	bool seen_current = false;
 	int idx = ioat->tail, i;
 	u16 active;
@@ -277,8 +287,8 @@ static void __cleanup(struct ioat2_dma_chan *ioat, unsigned long phys_complete)
 		smp_read_barrier_depends();
 		prefetch(ioat2_get_ring_ent(ioat, idx + i + 1));
 		desc = ioat2_get_ring_ent(ioat, idx + i);
-		hw = desc->hw;
-		dump_desc_dbg(ioat, desc);
+		hw = to_hw(desc);
+		__dump_desc_dbg(&ioat->base, hw, &desc->txd);
 		tx = &desc->txd;
 		if (tx->cookie) {
 			chan->completed_cookie = tx->cookie;
@@ -308,7 +318,8 @@ static void __cleanup(struct ioat2_dma_chan *ioat, unsigned long phys_complete)
 		}
 	}
 	smp_mb(); /* finish all descriptor reads before incrementing tail */
-	ioat->tail = idx + i;
+	ioat2_inc_tail(ioat, i);
+
 	BUG_ON(active && !seen_current); /* no active descs have written a completion? */
 	chan->last_completion = phys_complete;
 
@@ -360,7 +371,7 @@ static void ioat3_eh(struct ioat2_dma_chan *ioat)
 	struct pci_dev *pdev = to_pdev(chan);
 	struct ioat_dma_descriptor *hw;
 	unsigned long phys_complete;
-	struct ioat_ring_ent *desc;
+	struct ioat2_ring_ent *desc;
 	u32 err_handled = 0;
 	u32 chanerr_int;
 	u32 chanerr;
@@ -376,8 +387,8 @@ static void ioat3_eh(struct ioat2_dma_chan *ioat)
 		__cleanup(ioat, phys_complete);
 
 	desc = ioat2_get_ring_ent(ioat, ioat->tail);
-	hw = desc->hw;
-	dump_desc_dbg(ioat, desc);
+	hw = to_hw(desc);
+	__dump_desc_dbg(&ioat->base, hw, &desc->txd);
 
 	switch (hw->ctl_f.op) {
 	case IOAT_OP_XOR_VAL:
@@ -487,7 +498,8 @@ ioat3_prep_memset_lock(struct dma_chan *c, dma_addr_t dest, int value,
 		       size_t len, unsigned long flags)
 {
 	struct ioat2_dma_chan *ioat = to_ioat2_chan(c);
-	struct ioat_ring_ent *desc;
+	struct ioat2_ring_ent *desc;
+	struct ioat_dma_descriptor *hw;
 	size_t total_len = len;
 	struct ioat_fill_descriptor *fill;
 	u64 src_data = (0x0101010101010101ULL) * (value & 0xff);
@@ -503,7 +515,8 @@ ioat3_prep_memset_lock(struct dma_chan *c, dma_addr_t dest, int value,
 		size_t xfer_size = min_t(size_t, len, 1 << ioat->xfercap_log);
 
 		desc = ioat2_get_ring_ent(ioat, idx + i);
-		fill = desc->fill;
+		hw = to_hw(desc);
+		fill = (struct ioat_fill_descriptor *)hw;
 
 		fill->size = xfer_size;
 		fill->src_data = src_data;
@@ -513,7 +526,7 @@ ioat3_prep_memset_lock(struct dma_chan *c, dma_addr_t dest, int value,
 
 		len -= xfer_size;
 		dest += xfer_size;
-		dump_desc_dbg(ioat, desc);
+		__dump_desc_dbg(&ioat->base, to_hw(desc), &desc->txd);
 	} while (++i < num_descs);
 
 	desc->txd.flags = flags;
@@ -521,7 +534,7 @@ ioat3_prep_memset_lock(struct dma_chan *c, dma_addr_t dest, int value,
 	fill->ctl_f.int_en = !!(flags & DMA_PREP_INTERRUPT);
 	fill->ctl_f.fence = !!(flags & DMA_PREP_FENCE);
 	fill->ctl_f.compl_write = 1;
-	dump_desc_dbg(ioat, desc);
+	__dump_desc_dbg(&ioat->base, to_hw(desc), &desc->txd);
 
 	/* we leave the channel locked to ensure in order submission */
 	return &desc->txd;
@@ -533,13 +546,14 @@ __ioat3_prep_xor_lock(struct dma_chan *c, enum sum_check_flags *result,
 		      size_t len, unsigned long flags)
 {
 	struct ioat2_dma_chan *ioat = to_ioat2_chan(c);
-	struct ioat_ring_ent *compl_desc;
-	struct ioat_ring_ent *desc;
-	struct ioat_ring_ent *ext;
+	struct ioat2_ring_ent *compl_desc;
+	struct ioat2_ring_ent *desc;
+	struct ioat2_ring_ent *ext;
 	size_t total_len = len;
 	struct ioat_xor_descriptor *xor;
 	struct ioat_xor_ext_descriptor *xor_ex = NULL;
 	struct ioat_dma_descriptor *hw;
+	struct ioat_dma_descriptor *compl_hw;
 	int num_descs, with_ext, idx, i;
 	u32 offset = 0;
 	u8 op;
@@ -582,17 +596,20 @@ __ioat3_prep_xor_lock(struct dma_chan *c, enum sum_check_flags *result,
 	do {
 		struct ioat_raw_descriptor *descs[2];
 		size_t xfer_size = min_t(size_t, len, 1 << ioat->xfercap_log);
+		struct ioat_dma_descriptor *ext_hw;
 		int s;
 
 		desc = ioat2_get_ring_ent(ioat, idx + i);
-		xor = desc->xor;
+		hw = to_hw(desc);
+		xor = (struct ioat_xor_descriptor *)hw;
 
 		/* save a branch by unconditionally retrieving the
 		 * extended descriptor xor_set_src() knows to not write
 		 * to it in the single descriptor case
 		 */
 		ext = ioat2_get_ring_ent(ioat, idx + i + 1);
-		xor_ex = ext->xor_ex;
+		ext_hw = to_hw(desc);
+		xor_ex = (struct ioat_xor_ext_descriptor *)ext_hw;
 
 		descs[0] = (struct ioat_raw_descriptor *) xor;
 		descs[1] = (struct ioat_raw_descriptor *) xor_ex;
@@ -606,7 +623,7 @@ __ioat3_prep_xor_lock(struct dma_chan *c, enum sum_check_flags *result,
 
 		len -= xfer_size;
 		offset += xfer_size;
-		dump_desc_dbg(ioat, desc);
+		__dump_desc_dbg(&ioat->base, to_hw(desc), &desc->txd);
 	} while ((i += 1 + with_ext) < num_descs);
 
 	/* last xor descriptor carries the unmap parameters and fence bit */
@@ -619,13 +636,13 @@ __ioat3_prep_xor_lock(struct dma_chan *c, enum sum_check_flags *result,
 	/* completion descriptor carries interrupt bit */
 	compl_desc = ioat2_get_ring_ent(ioat, idx + i);
 	compl_desc->txd.flags = flags & DMA_PREP_INTERRUPT;
-	hw = compl_desc->hw;
-	hw->ctl = 0;
-	hw->ctl_f.null = 1;
-	hw->ctl_f.int_en = !!(flags & DMA_PREP_INTERRUPT);
-	hw->ctl_f.compl_write = 1;
-	hw->size = NULL_DESC_BUFFER_SIZE;
-	dump_desc_dbg(ioat, compl_desc);
+	compl_hw = to_hw(compl_desc);
+	compl_hw->ctl = 0;
+	compl_hw->ctl_f.null = 1;
+	compl_hw->ctl_f.int_en = !!(flags & DMA_PREP_INTERRUPT);
+	compl_hw->ctl_f.compl_write = 1;
+	compl_hw->size = NULL_DESC_BUFFER_SIZE;
+	__dump_desc_dbg(&ioat->base, compl_hw, &compl_desc->txd);
 
 	/* we leave the channel locked to ensure in order submission */
 	return &compl_desc->txd;
@@ -653,18 +670,21 @@ ioat3_prep_xor_val(struct dma_chan *chan, dma_addr_t *src,
 }
 
 static void
-dump_pq_desc_dbg(struct ioat2_dma_chan *ioat, struct ioat_ring_ent *desc, struct ioat_ring_ent *ext)
+dump_pq_desc_dbg(struct ioat2_dma_chan *ioat, struct ioat2_ring_ent *desc, struct ioat2_ring_ent *ext)
 {
 	struct device *dev = to_dev(&ioat->base);
-	struct ioat_pq_descriptor *pq = desc->pq;
-	struct ioat_pq_ext_descriptor *pq_ex = ext ? ext->pq_ex : NULL;
+	struct ioat_dma_descriptor *hw = to_hw(desc);
+	struct ioat_dma_descriptor *ext_hw = to_hw(ext);
+	struct ioat_pq_descriptor *pq = (struct ioat_pq_descriptor *)hw;
+	struct ioat_pq_ext_descriptor *pq_ex =
+		ext ? (struct ioat_pq_ext_descriptor *)ext_hw : NULL;
 	struct ioat_raw_descriptor *descs[] = { (void *) pq, (void *) pq_ex };
 	int src_cnt = src_cnt_to_sw(pq->ctl_f.src_cnt);
 	int i;
 
-	dev_dbg(dev, "desc[%d]: (%#llx->%#llx) flags: %#x"
+	dev_dbg(dev, "desc: (%#llx->%#llx) flags: %#x"
 		" sz: %#x ctl: %#x (op: %d int: %d compl: %d pq: '%s%s' src_cnt: %d)\n",
-		desc_id(desc), (unsigned long long) desc->txd.phys,
+		(unsigned long long) desc->txd.phys,
 		(unsigned long long) (pq_ex ? pq_ex->next : pq->next),
 		desc->txd.flags, pq->size, pq->ctl, pq->ctl_f.op, pq->ctl_f.int_en,
 		pq->ctl_f.compl_write,
@@ -685,13 +705,15 @@ __ioat3_prep_pq_lock(struct dma_chan *c, enum sum_check_flags *result,
 {
 	struct ioat2_dma_chan *ioat = to_ioat2_chan(c);
 	struct ioat_chan_common *chan = &ioat->base;
-	struct ioat_ring_ent *compl_desc;
-	struct ioat_ring_ent *desc;
-	struct ioat_ring_ent *ext;
+	struct ioat2_ring_ent *compl_desc;
+	struct ioat2_ring_ent *desc;
+	struct ioat2_ring_ent *ext;
 	size_t total_len = len;
 	struct ioat_pq_descriptor *pq;
 	struct ioat_pq_ext_descriptor *pq_ex = NULL;
 	struct ioat_dma_descriptor *hw;
+	struct ioat_dma_descriptor *ext_hw;
+	struct ioat_dma_descriptor *compl_hw;
 	u32 offset = 0;
 	int i, s, idx, with_ext, num_descs;
 	int completion_descs = 1;
@@ -750,15 +772,17 @@ __ioat3_prep_pq_lock(struct dma_chan *c, enum sum_check_flags *result,
 		struct ioat_raw_descriptor *descs[2];
 		size_t xfer_size = min_t(size_t, len, 1 << ioat->xfercap_log);
 
-		desc = ioat2_get_ring_ent(ioat, idx + i);
-		pq = desc->pq;
+		desc = ioat2_get_ring_ent(ioat, idx + i );
+		hw = to_hw(desc);
+		pq = (struct ioat_pq_descriptor *)hw;
 
 		/* save a branch by unconditionally retrieving the
 		 * extended descriptor pq_set_src() knows to not write
 		 * to it in the single descriptor case
 		 */
 		ext = ioat2_get_ring_ent(ioat, idx + i + with_ext);
-		pq_ex = ext->pq_ex;
+		ext_hw = to_hw(ext);
+		pq_ex = (struct ioat_pq_ext_descriptor *)ext_hw;
 
 		descs[0] = (struct ioat_raw_descriptor *) pq;
 		descs[1] = (struct ioat_raw_descriptor *) pq_ex;
@@ -800,7 +824,8 @@ __ioat3_prep_pq_lock(struct dma_chan *c, enum sum_check_flags *result,
 		struct ioat_raw_descriptor *descs[2];
 
 		compl_desc = ioat2_get_ring_ent(ioat, idx + i);
-		pq = compl_desc->pq;
+		compl_hw = to_hw(compl_desc);
+		pq = (struct ioat_pq_descriptor *)compl_hw;
 		descs[0] = (struct ioat_raw_descriptor *) pq;
 		descs[1] = NULL;
 
@@ -820,13 +845,13 @@ __ioat3_prep_pq_lock(struct dma_chan *c, enum sum_check_flags *result,
 	/* completion descriptor carries interrupt bit */
 	compl_desc = ioat2_get_ring_ent(ioat, idx + i);
 	compl_desc->txd.flags = flags & DMA_PREP_INTERRUPT;
-	hw = compl_desc->hw;
-	hw->ctl = 0;
-	hw->ctl_f.null = 1;
-	hw->ctl_f.int_en = !!(flags & DMA_PREP_INTERRUPT);
-	hw->ctl_f.compl_write = 1;
-	hw->size = NULL_DESC_BUFFER_SIZE;
-	dump_desc_dbg(ioat, compl_desc);
+	compl_hw = to_hw(compl_desc);
+	compl_hw->ctl = 0;
+	compl_hw->ctl_f.null = 1;
+	compl_hw->ctl_f.int_en = !!(flags & DMA_PREP_INTERRUPT);
+	compl_hw->ctl_f.compl_write = 1;
+	compl_hw->size = NULL_DESC_BUFFER_SIZE;
+	__dump_desc_dbg(&ioat->base, compl_hw, &compl_desc->txd);
 
 	/* we leave the channel locked to ensure in order submission */
 	return &compl_desc->txd;
@@ -925,7 +950,7 @@ static struct dma_async_tx_descriptor *
 ioat3_prep_interrupt_lock(struct dma_chan *c, unsigned long flags)
 {
 	struct ioat2_dma_chan *ioat = to_ioat2_chan(c);
-	struct ioat_ring_ent *desc;
+	struct ioat2_ring_ent *desc;
 	struct ioat_dma_descriptor *hw;
 
 	if (ioat2_check_space_lock(ioat, 1) == 0)
@@ -933,7 +958,7 @@ ioat3_prep_interrupt_lock(struct dma_chan *c, unsigned long flags)
 	else
 		return NULL;
 
-	hw = desc->hw;
+	hw = to_hw(desc);
 	hw->ctl = 0;
 	hw->ctl_f.null = 1;
 	hw->ctl_f.int_en = 1;
@@ -946,7 +971,7 @@ ioat3_prep_interrupt_lock(struct dma_chan *c, unsigned long flags)
 	desc->txd.flags = flags;
 	desc->len = 1;
 
-	dump_desc_dbg(ioat, desc);
+	__dump_desc_dbg(&ioat->base, hw, &desc->txd);
 
 	/* we leave the channel locked to ensure in order submission */
 	return &desc->txd;
