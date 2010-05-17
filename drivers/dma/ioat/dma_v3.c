@@ -340,6 +340,68 @@ static void ioat3_restart_channel(struct ioat2_dma_chan *ioat)
 	__ioat2_restart_chan(ioat);
 }
 
+static void ioat3_eh(struct ioat2_dma_chan *ioat)
+{
+	struct ioat_chan_common *chan = &ioat->base;
+	struct pci_dev *pdev = to_pdev(chan);
+	struct ioat_dma_descriptor *hw;
+	unsigned long phys_complete;
+	struct ioat_ring_ent *desc;
+	u32 err_handled = 0;
+	u32 chanerr_int;
+	u32 chanerr;
+
+	chanerr = readl(chan->reg_base + IOAT_CHANERR_OFFSET);
+	pci_read_config_dword(pdev, IOAT_PCI_CHANERR_INT_OFFSET, &chanerr_int);
+
+	dev_dbg(to_dev(chan), "%s: error = %x:%x\n",
+		__func__, chanerr, chanerr_int);
+
+	/* cleanup so tail points to descriptor that caused the error */
+	if (ioat_cleanup_preamble(chan, &phys_complete))
+		__cleanup(ioat, phys_complete);
+
+	desc = ioat2_get_ring_ent(ioat, ioat->tail);
+	hw = desc->hw;
+	dump_desc_dbg(ioat, desc);
+
+	switch (hw->ctl_f.op) {
+	case IOAT_OP_XOR_VAL:
+		if (chanerr & IOAT_CHANERR_XOR_P_OR_CRC_ERR) {
+			*desc->result |= SUM_CHECK_P_RESULT;
+			err_handled |= IOAT_CHANERR_XOR_P_OR_CRC_ERR;
+		}
+		break;
+	case IOAT_OP_PQ_VAL:
+		if (chanerr & IOAT_CHANERR_XOR_P_OR_CRC_ERR) {
+			*desc->result |= SUM_CHECK_P_RESULT;
+			err_handled |= IOAT_CHANERR_XOR_P_OR_CRC_ERR;
+		}
+		if (chanerr & IOAT_CHANERR_XOR_Q_ERR) {
+			*desc->result |= SUM_CHECK_Q_RESULT;
+			err_handled |= IOAT_CHANERR_XOR_Q_ERR;
+		}
+		break;
+	}
+
+	/* fault on unhandled error or spurious halt */
+	if (chanerr ^ err_handled || chanerr == 0) {
+		dev_err(to_dev(chan), "%s: fatal error (%x:%x)\n",
+			__func__, chanerr, err_handled);
+		BUG();
+	}
+
+	writel(chanerr, chan->reg_base + IOAT_CHANERR_OFFSET);
+	pci_write_config_dword(pdev, IOAT_PCI_CHANERR_INT_OFFSET, chanerr_int);
+
+	/* mark faulting descriptor as complete */
+	*chan->completion = desc->txd.phys;
+
+	spin_lock_bh(&ioat->prep_lock);
+	ioat3_restart_channel(ioat);
+	spin_unlock_bh(&ioat->prep_lock);
+}
+
 static void ioat3_timer_event(unsigned long data)
 {
 	struct ioat2_dma_chan *ioat = to_ioat2_chan((void *) data);
@@ -351,24 +413,15 @@ static void ioat3_timer_event(unsigned long data)
 
 		status = ioat_chansts(chan);
 
-		/* when halted due to errors check for channel
-		 * programming errors before advancing the completion state
-		 */
-		if (is_ioat_halted(status)) {
-			u32 chanerr;
-
-			chanerr = readl(chan->reg_base + IOAT_CHANERR_OFFSET);
-			dev_err(to_dev(chan), "%s: Channel halted (%x)\n",
-				__func__, chanerr);
-			BUG_ON(is_ioat_bug(chanerr));
-		}
-
-		/* if we haven't made progress and we have already
+		/* when halted run error handling, otherwise
+		 * if we haven't made progress and we have already
 		 * acknowledged a pending completion once, then be more
 		 * forceful with a restart
 		 */
 		spin_lock_bh(&chan->cleanup_lock);
-		if (ioat_cleanup_preamble(chan, &phys_complete))
+		if (is_ioat_halted(status))
+			ioat3_eh(ioat);
+		else if (ioat_cleanup_preamble(chan, &phys_complete))
 			__cleanup(ioat, phys_complete);
 		else if (test_bit(IOAT_COMPLETION_ACK, &chan->state)) {
 			spin_lock_bh(&ioat->prep_lock);

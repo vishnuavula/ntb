@@ -153,6 +153,8 @@ static inline void ioat2_set_chainaddr(struct ioat2_dma_chan *ioat, u64 addr)
 	       chan->reg_base + IOAT2_CHAINADDR_OFFSET_LOW);
 	writel(addr >> 32,
 	       chan->reg_base + IOAT2_CHAINADDR_OFFSET_HIGH);
+
+	ioat_check_armed(chan);
 }
 
 int __devinit ioat2_dma_probe(struct ioatdma_device *dev, int dca);
