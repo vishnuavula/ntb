@@ -411,7 +411,9 @@ static void ioat3_eh(struct ioat2_dma_chan *ioat)
 	/* mark faulting descriptor as complete */
 	*chan->completion = desc->txd.phys;
 
+	spin_lock_bh(&ioat->prep_lock);
 	ioat3_restart_channel(ioat);
+	spin_unlock_bh(&ioat->prep_lock);
 }
 
 static void ioat3_timer_event(unsigned long data)
