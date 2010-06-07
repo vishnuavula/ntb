@@ -2836,6 +2836,10 @@ static int parse_add_region(const char *input, struct bbu_region *new)
 	char *c1, *c2;
 	int i;
 
+	/* input length needs to be > 0 */
+	if(!input_len)
+		return -EINVAL;
+
 	memset(tmp, 0, sizeof(tmp));
 	memset(new, 0, sizeof(*new));
 
