@@ -2849,7 +2849,7 @@ static int parse_add_region(const char *input, struct bbu_region *new)
 		if (input_len <= sizeof(tmp))
 			tmp[input_len - 1] = 0;
 	} else if (input_len < sizeof(tmp))
-		strncpy(tmp, input, sizeof(tmp));
+		strncpy(tmp, input, input_len);
 	else
 		return -E2BIG;
 
