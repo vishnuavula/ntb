@@ -51,6 +51,7 @@
 #include <linux/seq_file.h>
 #include <linux/cpu.h>
 #include <linux/slab.h>
+#include <linux/bbu.h>
 #include "md.h"
 #include "raid5.h"
 #include "bitmap.h"
@@ -497,63 +498,6 @@ static void ops_run_io(struct stripe_head *sh, struct stripe_head_state *s)
 	}
 }
 
-static struct dma_async_tx_descriptor *
-async_copy_data(int frombio, struct bio *bio, struct page *page,
-	sector_t sector, struct dma_async_tx_descriptor *tx)
-{
-	struct bio_vec *bvl;
-	struct page *bio_page;
-	int i;
-	int page_offset;
-	struct async_submit_ctl submit;
-	enum async_tx_flags flags = 0;
-
-	if (bio->bi_sector >= sector)
-		page_offset = (signed)(bio->bi_sector - sector) * 512;
-	else
-		page_offset = (signed)(sector - bio->bi_sector) * -512;
-
-	if (frombio)
-		flags |= ASYNC_TX_FENCE;
-	init_async_submit(&submit, flags, tx, NULL, NULL, NULL);
-
-	bio_for_each_segment(bvl, bio, i) {
-		int len = bio_iovec_idx(bio, i)->bv_len;
-		int clen;
-		int b_offset = 0;
-
-		if (page_offset < 0) {
-			b_offset = -page_offset;
-			page_offset += b_offset;
-			len -= b_offset;
-		}
-
-		if (len > 0 && page_offset + len > STRIPE_SIZE)
-			clen = STRIPE_SIZE - page_offset;
-		else
-			clen = len;
-
-		if (clen > 0) {
-			b_offset += bio_iovec_idx(bio, i)->bv_offset;
-			bio_page = bio_iovec_idx(bio, i)->bv_page;
-			if (frombio)
-				tx = async_memcpy(page, bio_page, page_offset,
-						  b_offset, clen, &submit);
-			else
-				tx = async_memcpy(bio_page, page, b_offset,
-						  page_offset, clen, &submit);
-		}
-		/* chain the operations */
-		submit.depend_tx = tx;
-
-		if (clen < len) /* hit end of page */
-			break;
-		page_offset +=  len;
-	}
-
-	return tx;
-}
-
 static void ops_complete_biofill(void *stripe_head_ref)
 {
 	struct stripe_head *sh = stripe_head_ref;
@@ -620,8 +564,8 @@ static void ops_run_biofill(struct stripe_head *sh)
 			spin_unlock_irq(&conf->device_lock);
 			while (rbi && rbi->bi_sector <
 				dev->sector + STRIPE_SECTORS) {
-				tx = async_copy_data(0, rbi, dev->page,
-					dev->sector, tx);
+				tx = async_copy_biodata(0, rbi, dev->page, 0,
+							dev->sector, tx);
 				rbi = r5_next_bio(rbi, dev->sector);
 			}
 		}
@@ -962,8 +906,8 @@ ops_run_biodrain(struct stripe_head *sh, struct dma_async_tx_descriptor *tx)
 
 			while (wbi && wbi->bi_sector <
 				dev->sector + STRIPE_SECTORS) {
-				tx = async_copy_data(1, wbi, dev->page,
-					dev->sector, tx);
+				tx = async_copy_biodata(1, wbi, dev->page, 0,
+							dev->sector, tx);
 				wbi = r5_next_bio(wbi, dev->sector);
 			}
 		}
@@ -3574,7 +3518,7 @@ static void unplug_slaves(mddev_t *mddev)
 
 static void raid5_unplug_device(struct request_queue *q)
 {
-	mddev_t *mddev = q->queuedata;
+	mddev_t *mddev = md_queuedata(q);
 	raid5_conf_t *conf = mddev->private;
 	unsigned long flags;
 
@@ -3619,7 +3563,7 @@ static int raid5_mergeable_bvec(struct request_queue *q,
 				struct bvec_merge_data *bvm,
 				struct bio_vec *biovec)
 {
-	mddev_t *mddev = q->queuedata;
+	mddev_t *mddev = md_queuedata(q);
 	sector_t sector = bvm->bi_sector + get_start_sect(bvm->bi_bdev);
 	int max;
 	unsigned int chunk_sectors = mddev->chunk_sectors;
@@ -3709,7 +3653,7 @@ static void raid5_align_endio(struct bio *bi, int error)
 
 	bio_put(bi);
 
-	mddev = raid_bi->bi_bdev->bd_disk->queue->queuedata;
+	mddev = md_queuedata(raid_bi->bi_bdev->bd_disk->queue);
 	conf = mddev->private;
 	rdev = (void*)raid_bi->bi_next;
 	raid_bi->bi_next = NULL;
@@ -3751,7 +3695,7 @@ static int bio_fits_rdev(struct bio *bi)
 
 static int chunk_aligned_read(struct request_queue *q, struct bio * raid_bio)
 {
-	mddev_t *mddev = q->queuedata;
+	mddev_t *mddev = md_queuedata(q);
 	raid5_conf_t *conf = mddev->private;
 	int dd_idx;
 	struct bio* align_bi;
@@ -3868,7 +3812,7 @@ static struct stripe_head *__get_priority_stripe(raid5_conf_t *conf)
 
 static int make_request(struct request_queue *q, struct bio * bi)
 {
-	mddev_t *mddev = q->queuedata;
+	mddev_t *mddev = md_queuedata(q);
 	raid5_conf_t *conf = mddev->private;
 	int dd_idx;
 	sector_t new_sector;
@@ -4721,6 +4665,8 @@ static raid5_conf_t *setup_conf(mddev_t *mddev)
 	int raid_disk, memory, max_disks;
 	mdk_rdev_t *rdev;
 	struct disk_info *disk;
+	struct bbu_device_info info;
+	make_request_fn *mfn;
 
 	if (mddev->new_level != 5
 	    && mddev->new_level != 4
@@ -4789,6 +4735,28 @@ static raid5_conf_t *setup_conf(mddev_t *mddev)
 	if (raid5_alloc_percpu(conf) != 0)
 		goto abort;
 
+	conf->chunk_sectors = mddev->new_chunk_sectors;
+	conf->level = mddev->new_level;
+	if (conf->level == 6)
+		conf->max_degraded = 2;
+	else
+		conf->max_degraded = 1;
+
+	info.stripe_sectors = conf->chunk_sectors;
+	info.stripe_members = conf->raid_disks - conf->max_degraded;
+	mfn = bbu_register(mddev->uuid, mddev->gendisk, make_request, &info);
+	if (!IS_ERR(mfn)) {
+		pr_info("raid5: registered with battery backed cache\n");
+		mddev->bbu_make_request = mfn;
+	} else if (PTR_ERR(mfn) == -ENODEV) {
+		/* no cache present */
+		mddev->bbu_make_request = NULL;
+	} else {
+		/* cache present, but failed init */
+		pr_err("raid5: failed to initialize bbu cache\n");
+		goto abort;
+	}
+
 	pr_debug("raid5: run(%s) called.\n", mdname(mddev));
 
 	list_for_each_entry(rdev, &mddev->disks, same_set) {
@@ -4810,12 +4778,6 @@ static raid5_conf_t *setup_conf(mddev_t *mddev)
 			conf->fullsync = 1;
 	}
 
-	conf->chunk_sectors = mddev->new_chunk_sectors;
-	conf->level = mddev->new_level;
-	if (conf->level == 6)
-		conf->max_degraded = 2;
-	else
-		conf->max_degraded = 1;
 	conf->algorithm = mddev->new_layout;
 	conf->max_nr_stripes = NR_STRIPES;
 	conf->reshape_progress = mddev->reshape_position;
@@ -5376,6 +5338,13 @@ static int check_reshape(mddev_t *mddev)
 	    mddev->new_layout == mddev->layout &&
 	    mddev->new_chunk_sectors == mddev->chunk_sectors)
 		return 0; /* nothing to do */
+
+	/* TODO: enable support for reshaping in cooperation with a
+	 * caching agent
+	 */
+	if (mddev->bbu_make_request)
+		return -EBUSY;
+
 	if (mddev->bitmap)
 		/* Cannot grow a bitmap yet */
 		return -EBUSY;

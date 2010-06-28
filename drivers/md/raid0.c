@@ -26,7 +26,7 @@
 
 static void raid0_unplug(struct request_queue *q)
 {
-	mddev_t *mddev = q->queuedata;
+	mddev_t *mddev = md_queuedata(q);
 	raid0_conf_t *conf = mddev->private;
 	mdk_rdev_t **devlist = conf->devlist;
 	int i;
@@ -284,7 +284,7 @@ static int raid0_mergeable_bvec(struct request_queue *q,
 				struct bvec_merge_data *bvm,
 				struct bio_vec *biovec)
 {
-	mddev_t *mddev = q->queuedata;
+	mddev_t *mddev = md_queuedata(q);
 	sector_t sector = bvm->bi_sector + get_start_sect(bvm->bi_bdev);
 	int max;
 	unsigned int chunk_sectors = mddev->chunk_sectors;
@@ -446,7 +446,7 @@ static inline int is_io_in_chunk_boundary(mddev_t *mddev,
 
 static int raid0_make_request(struct request_queue *q, struct bio *bio)
 {
-	mddev_t *mddev = q->queuedata;
+	mddev_t *mddev = md_queuedata(q);
 	unsigned int chunk_sects;
 	sector_t sector_offset;
 	struct strip_zone *zone;
