@@ -65,7 +65,6 @@
 #ifndef NTB_LIB_H_
 #define NTB_LIB_H_
 
-#include <linux/autoconf.h>
 #include <linux/module.h>     /* SET_MODULE_OWNER */
 #include <linux/version.h>
 #include <linux/sched.h>
