@@ -51,6 +51,28 @@ TRACE_EVENT(raid5_hold_list,
 		  __entry->full)
 );
 
+TRACE_EVENT(raid5_hold_delay,
+
+	TP_PROTO(raid5_conf_t *conf, struct stripe_head *sh, unsigned long tmo),
+
+	TP_ARGS(conf, sh, tmo),
+
+	TP_STRUCT__entry(
+		__array(char,		name,	DISK_NAME_LEN)
+		__field(sector_t,	sector)
+		__field(unsigned long,	tmo)
+	),
+
+	TP_fast_assign(
+		memcpy(__entry->name, mdname(conf->mddev), DISK_NAME_LEN);
+		__entry->sector = sh->sector;
+		__entry->tmo = tmo;
+	),
+
+	TP_printk("mddev=%s sector=%llu tmo: %lu", __entry->name,
+		  (unsigned long long) __entry->sector, __entry->tmo)
+);
+
 TRACE_EVENT(raid5_hold_enter,
 
 	TP_PROTO(raid5_conf_t *conf, struct stripe_head *sh),
