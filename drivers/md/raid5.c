@@ -55,6 +55,9 @@
 #include "raid5.h"
 #include "bitmap.h"
 
+#define CREATE_TRACE_POINTS
+#include "raid5-trace.h"
+
 /*
  * Stripe cache
  */
@@ -201,6 +204,7 @@ static void __release_stripe(raid5_conf_t *conf, struct stripe_head *sh)
 			if (test_bit(STRIPE_DELAYED, &sh->state)) {
 				list_add_tail(&sh->lru, &conf->delayed_list);
 				blk_plug_device(conf->mddev->queue);
+				trace_raid5_delay_enter(conf, sh);
 			} else if (test_bit(STRIPE_BIT_DELAY, &sh->state) &&
 				   sh->bm_seq - conf->seq_write > 0) {
 				list_add_tail(&sh->lru, &conf->bitmap_list);
@@ -3457,6 +3461,7 @@ static void raid5_activate_delayed(raid5_conf_t *conf)
 			if (!test_and_set_bit(STRIPE_PREREAD_ACTIVE, &sh->state))
 				atomic_inc(&conf->preread_active_stripes);
 			list_add_tail(&sh->lru, &conf->hold_list);
+			trace_raid5_hold_enter(conf, sh);
 		}
 	} else
 		blk_plug_device(conf->mddev->queue);
@@ -3763,6 +3768,7 @@ static struct stripe_head *__get_priority_stripe(raid5_conf_t *conf)
 
 	if (!list_empty(&conf->handle_list)) {
 		sh = list_entry(conf->handle_list.next, typeof(*sh), lru);
+		trace_raid5_handle_list(conf, sh);
 
 		if (list_empty(&conf->hold_list))
 			conf->bypass_count = 0;
@@ -3780,8 +3786,8 @@ static struct stripe_head *__get_priority_stripe(raid5_conf_t *conf)
 		   ((conf->bypass_threshold &&
 		     conf->bypass_count > conf->bypass_threshold) ||
 		    atomic_read(&conf->pending_full_writes) == 0)) {
-		sh = list_entry(conf->hold_list.next,
-				typeof(*sh), lru);
+		sh = list_entry(conf->hold_list.next, typeof(*sh), lru);
+		trace_raid5_hold_list(conf, sh);
 		conf->bypass_count -= conf->bypass_threshold;
 		if (conf->bypass_count < 0)
 			conf->bypass_count = 0;
