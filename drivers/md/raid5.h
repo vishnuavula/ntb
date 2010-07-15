@@ -218,6 +218,7 @@ struct stripe_head {
 	int			disks;		/* disks in stripe */
 	enum check_states	check_state;
 	enum reconstruct_states reconstruct_state;
+	unsigned long		delay_enter;
 	/**
 	 * struct stripe_operations
 	 * @target - STRIPE_OP_COMPUTE_BLK target
@@ -383,9 +384,9 @@ struct raid5_private_data {
 	atomic_t		preread_active_stripes; /* stripes with scheduled io */
 	atomic_t		active_aligned_reads;
 	atomic_t		pending_full_writes; /* full write backlog */
-	int			bypass_count; /* bypassed prereads */
-	int			bypass_threshold; /* preread nice */
-	struct list_head	*last_hold; /* detect hold_list promotions */
+	unsigned long		delay_avg; /* precision shifted average promotion delay */
+	atomic_t		promote_event;
+	struct timer_list	write_delay_timer;
 
 	atomic_t		reshape_stripes; /* stripes with pending writes for reshape */
 	/* unfortunately we need two cache names as we temporarily have

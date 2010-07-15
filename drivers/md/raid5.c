@@ -68,7 +68,6 @@
 #define STRIPE_SHIFT		(PAGE_SHIFT - 9)
 #define STRIPE_SECTORS		(STRIPE_SIZE>>9)
 #define	IO_THRESHOLD		1
-#define BYPASS_THRESHOLD	1
 #define NR_HASH			(PAGE_SIZE / sizeof(struct hlist_head))
 #define HASH_MASK		(NR_HASH - 1)
 
@@ -205,6 +204,8 @@ static void __release_stripe(raid5_conf_t *conf, struct stripe_head *sh)
 			if (test_bit(STRIPE_DELAYED, &sh->state)) {
 				list_add_tail(&sh->lru, &conf->delayed_list);
 				blk_plug_device(conf->mddev->queue);
+				if (!sh->delay_enter)
+					sh->delay_enter = jiffies;
 				trace_raid5_delay_enter(conf, sh);
 			} else if (test_bit(STRIPE_BIT_DELAY, &sh->state) &&
 				   sh->bm_seq - conf->seq_write > 0) {
@@ -1926,6 +1927,38 @@ static sector_t compute_blocknr(struct stripe_head *sh, int i, int previous)
 	return r_sector;
 }
 
+#define DELAY_SHIFT 13UL
+#define PRECISION_SHIFT 4UL
+#define COUNT_SHIFT (31 - DELAY_SHIFT - PRECISION_SHIFT)
+#define COUNT_MAX (1UL << COUNT_SHIFT)
+#define ROUND_BIT ((1UL << PRECISION_SHIFT) - 1)
+#define DELAY_MAX (1UL << DELAY_SHIFT)
+
+static void full_write_event(raid5_conf_t *conf, struct stripe_head *sh)
+{
+	unsigned long delay_enter = sh->delay_enter;
+	unsigned long curr_jiffies = jiffies;
+
+	if (delay_enter && time_after(curr_jiffies, delay_enter)) {
+		unsigned long delta = min(DELAY_MAX, curr_jiffies - delay_enter);
+		unsigned long promote_event = atomic_read(&conf->promote_event);
+		unsigned long avg = conf->delay_avg;
+
+		delta <<= PRECISION_SHIFT;
+		if (unlikely(promote_event < COUNT_MAX-1)) {
+			/* after a brief warm up we never take this
+			 * branch again
+			 */
+			avg = (avg * promote_event + delta) /
+			       (promote_event + 1);
+			atomic_inc(&conf->promote_event);
+		} else
+			avg = (avg * (COUNT_MAX-1) + delta) / COUNT_MAX;
+		conf->delay_avg = avg;
+		sh->delay_enter = 0;
+	}
+	atomic_inc(&conf->pending_full_writes);
+}
 
 static void
 schedule_reconstruction(struct stripe_head *sh, struct stripe_head_state *s,
@@ -1961,7 +1994,7 @@ schedule_reconstruction(struct stripe_head *sh, struct stripe_head_state *s,
 		}
 		if (s->locked + conf->max_degraded == disks)
 			if (!test_and_set_bit(STRIPE_FULL_WRITE, &sh->state))
-				atomic_inc(&conf->pending_full_writes);
+				full_write_event(conf, sh);
 	} else {
 		BUG_ON(level == 6);
 		BUG_ON(!(test_bit(R5_UPTODATE, &sh->dev[pd_idx].flags) ||
@@ -3772,41 +3805,33 @@ static int chunk_aligned_read(struct request_queue *q, struct bio * raid_bio)
  * head of the hold_list has changed, i.e. the head was promoted to the
  * handle_list.
  */
-static struct stripe_head *__get_priority_stripe(raid5_conf_t *conf)
+static struct stripe_head *__get_priority_stripe(raid5_conf_t *conf, unsigned long curr_jiffies)
 {
 	struct stripe_head *sh;
-
-	pr_debug("%s: handle: %s hold: %s full_writes: %d bypass_count: %d\n",
-		  __func__,
-		  list_empty(&conf->handle_list) ? "empty" : "busy",
-		  list_empty(&conf->hold_list) ? "empty" : "busy",
-		  atomic_read(&conf->pending_full_writes), conf->bypass_count);
 
 	if (!list_empty(&conf->handle_list)) {
 		sh = list_entry(conf->handle_list.next, typeof(*sh), lru);
 		trace_raid5_handle_list(conf, sh);
+	} else if (!list_empty(&conf->hold_list)) {
+		unsigned long avg = conf->delay_avg;
+		unsigned long delay_target;
 
-		if (list_empty(&conf->hold_list))
-			conf->bypass_count = 0;
-		else if (!test_bit(STRIPE_IO_STARTED, &sh->state)) {
-			if (conf->hold_list.next == conf->last_hold)
-				conf->bypass_count++;
-			else {
-				conf->last_hold = conf->hold_list.next;
-				conf->bypass_count -= conf->bypass_threshold;
-				if (conf->bypass_count < 0)
-					conf->bypass_count = 0;
-			}
-		}
-	} else if (!list_empty(&conf->hold_list) &&
-		   ((conf->bypass_threshold &&
-		     conf->bypass_count > conf->bypass_threshold) ||
-		    atomic_read(&conf->pending_full_writes) == 0)) {
 		sh = list_entry(conf->hold_list.next, typeof(*sh), lru);
-		trace_raid5_hold_list(conf, sh);
-		conf->bypass_count -= conf->bypass_threshold;
-		if (conf->bypass_count < 0)
-			conf->bypass_count = 0;
+		if (avg & ROUND_BIT)
+			avg = (avg >> PRECISION_SHIFT) + 1;
+		else
+			avg = avg >> PRECISION_SHIFT;
+		delay_target = sh->delay_enter + avg;
+		if (atomic_read(&conf->pending_full_writes) == 0 ||
+		    time_after(curr_jiffies, delay_target)) {
+			trace_raid5_hold_list(conf, sh);
+			sh->delay_enter = 0;
+		} else {
+			trace_raid5_hold_delay(conf, sh,
+					       delay_target - curr_jiffies);
+			mod_timer(&conf->write_delay_timer, delay_target);
+			return NULL;
+		}
 	} else
 		return NULL;
 
@@ -4378,6 +4403,7 @@ static void raid5d(mddev_t *mddev)
 {
 	struct stripe_head *sh;
 	raid5_conf_t *conf = mddev->private;
+	unsigned long curr_jiffies = jiffies;
 	int handled;
 
 	pr_debug("+++ raid5d active\n");
@@ -4408,7 +4434,7 @@ static void raid5d(mddev_t *mddev)
 			handled++;
 		}
 
-		sh = __get_priority_stripe(conf);
+		sh = __get_priority_stripe(conf, curr_jiffies);
 
 		if (!sh)
 			break;
@@ -4480,38 +4506,20 @@ raid5_stripecache_size = __ATTR(stripe_cache_size, S_IRUGO | S_IWUSR,
 				raid5_store_stripe_cache_size);
 
 static ssize_t
-raid5_show_preread_threshold(mddev_t *mddev, char *page)
+full_write_submit_show(mddev_t *mddev, char *page)
 {
 	raid5_conf_t *conf = mddev->private;
 	if (conf)
-		return sprintf(page, "%d\n", conf->bypass_threshold);
+		return sprintf(page, "avg: %lu (%u:%u)\n", 
+			       conf->delay_avg,
+			       jiffies_to_msecs(conf->delay_avg >> PRECISION_SHIFT),
+			       jiffies_to_usecs(conf->delay_avg >> PRECISION_SHIFT));
 	else
 		return 0;
 }
 
-static ssize_t
-raid5_store_preread_threshold(mddev_t *mddev, const char *page, size_t len)
-{
-	raid5_conf_t *conf = mddev->private;
-	unsigned long new;
-	if (len >= PAGE_SIZE)
-		return -EINVAL;
-	if (!conf)
-		return -ENODEV;
-
-	if (strict_strtoul(page, 10, &new))
-		return -EINVAL;
-	if (new > conf->max_nr_stripes)
-		return -EINVAL;
-	conf->bypass_threshold = new;
-	return len;
-}
-
 static struct md_sysfs_entry
-raid5_preread_bypass_threshold = __ATTR(preread_bypass_threshold,
-					S_IRUGO | S_IWUSR,
-					raid5_show_preread_threshold,
-					raid5_store_preread_threshold);
+raid5_full_write_submit = __ATTR_RO(full_write_submit);
 
 static ssize_t
 stripe_cache_active_show(mddev_t *mddev, char *page)
@@ -4529,7 +4537,7 @@ raid5_stripecache_active = __ATTR_RO(stripe_cache_active);
 static struct attribute *raid5_attrs[] =  {
 	&raid5_stripecache_size.attr,
 	&raid5_stripecache_active.attr,
-	&raid5_preread_bypass_threshold.attr,
+	&raid5_full_write_submit.attr,
 	NULL,
 };
 static struct attribute_group raid5_attrs_group = {
@@ -4577,6 +4585,7 @@ static void raid5_free_percpu(raid5_conf_t *conf)
 
 static void free_conf(raid5_conf_t *conf)
 {
+	del_timer_sync(&conf->write_delay_timer);
 	shrink_stripes(conf);
 	raid5_free_percpu(conf);
 	kfree(conf->disks);
@@ -4665,6 +4674,14 @@ static int raid5_alloc_percpu(raid5_conf_t *conf)
 	return err;
 }
 
+static void write_delay_event(unsigned long __conf)
+{
+	raid5_conf_t *conf = (raid5_conf_t *) __conf;
+	mddev_t *mddev = conf->mddev;
+
+	md_wakeup_thread(mddev->thread);
+}
+
 static raid5_conf_t *setup_conf(mddev_t *mddev)
 {
 	raid5_conf_t *conf;
@@ -4717,7 +4734,10 @@ static raid5_conf_t *setup_conf(mddev_t *mddev)
 	atomic_set(&conf->active_stripes, 0);
 	atomic_set(&conf->preread_active_stripes, 0);
 	atomic_set(&conf->active_aligned_reads, 0);
-	conf->bypass_threshold = BYPASS_THRESHOLD;
+	atomic_set(&conf->promote_event, 0);
+	init_timer(&conf->write_delay_timer);
+	conf->write_delay_timer.function = write_delay_event;
+	conf->write_delay_timer.data = (unsigned long) conf;
 
 	conf->raid_disks = mddev->raid_disks;
 	if (mddev->reshape_position == MaxSector)
