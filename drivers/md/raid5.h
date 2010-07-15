@@ -4,6 +4,10 @@
 #include <linux/raid/xor.h>
 #include <linux/dmaengine.h>
 
+#undef TRACE_SYSTEM
+#define TRACE_SYSTEM raid5
+#include <linux/tracepoint.h>
+
 /*
  *
  * Each stripe contains one buffer per disc.  Each buffer can be in
