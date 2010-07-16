@@ -39,6 +39,7 @@
 #define to_ioat_desc(lh) container_of(lh, struct ioat_desc_sw, node)
 #define tx_to_ioat_desc(tx) container_of(tx, struct ioat_desc_sw, txd)
 #define to_dev(ioat_chan) (&(ioat_chan)->device->pdev->dev)
+#define to_pdev(ioat_chan) ((ioat_chan)->device->pdev)
 
 #define chan_num(ch) ((int)((ch)->reg_base - (ch)->device->reg_base) / 0x80)
 
@@ -61,7 +62,7 @@
  * @intr_quirk: interrupt setup quirk (for ioat_v1 devices)
  * @enumerate_channels: hw version specific channel enumeration
  * @reset_hw: hw version specific channel (re)initialization
- * @cleanup_tasklet: select between the v2 and v3 cleanup routines
+ * @cleanup_fn: select between the v2 and v3 cleanup routines
  * @timer_fn: select between the v2 and v3 timer watchdog routines
  * @self_test: hardware version specific self test for each supported op type
  *
@@ -80,7 +81,7 @@ struct ioatdma_device {
 	void (*intr_quirk)(struct ioatdma_device *device);
 	int (*enumerate_channels)(struct ioatdma_device *device);
 	int (*reset_hw)(struct ioat_chan_common *chan);
-	void (*cleanup_tasklet)(unsigned long data);
+	void (*cleanup_fn)(unsigned long data);
 	void (*timer_fn)(unsigned long data);
 	int (*self_test)(struct ioatdma_device *device);
 };
@@ -96,6 +97,9 @@ struct ioat_chan_common {
 	#define IOAT_COMPLETION_ACK 1
 	#define IOAT_RESET_PENDING 2
 	#define IOAT_KOBJ_INIT_FAIL 3
+	#define IOAT_RESHAPE_PENDING 4
+	#define IOAT_ARM_FAIL 5
+	#define IOAT3_VAL_PENDING 6
 	struct timer_list timer;
 	#define COMPLETION_TIMEOUT msecs_to_jiffies(100)
 	#define IDLE_TIMEOUT msecs_to_jiffies(2000)
@@ -312,10 +316,24 @@ static inline bool is_ioat_suspended(unsigned long status)
 	return ((status & IOAT_CHANSTS_STATUS) == IOAT_CHANSTS_SUSPENDED);
 }
 
+static inline bool is_ioat_armed(unsigned long status)
+{
+	return ((status & IOAT_CHANSTS_STATUS) == IOAT_CHANSTS_ARMED);
+}
+
+static inline void ioat_check_armed(struct ioat_chan_common *chan)
+{
+	u64 status = ioat_chansts(chan);
+
+	if (!is_ioat_armed(status) &&
+	    !test_and_set_bit(IOAT_ARM_FAIL, &chan->state))
+		dev_WARN(to_dev(chan), "failed to arm channel\n");
+}
+
 /* channel was fatally programmed */
 static inline bool is_ioat_bug(unsigned long err)
 {
-	return !!err;
+	return !!(err & ~(IOAT_CHANERR_XOR_P_OR_CRC_ERR|IOAT_CHANERR_XOR_Q_ERR));
 }
 
 static inline void ioat_unmap(struct pci_dev *pdev, dma_addr_t addr, size_t len,
@@ -337,10 +355,9 @@ struct dca_provider * __devinit ioat_dca_init(struct pci_dev *pdev,
 					      void __iomem *iobase);
 unsigned long ioat_get_current_completion(struct ioat_chan_common *chan);
 void ioat_init_channel(struct ioatdma_device *device,
-		       struct ioat_chan_common *chan, int idx,
-		       void (*timer_fn)(unsigned long),
-		       void (*tasklet)(unsigned long),
-		       unsigned long ioat);
+		       struct ioat_chan_common *chan, int idx);
+enum dma_status ioat_is_dma_complete(struct dma_chan *c, dma_cookie_t cookie,
+				     dma_cookie_t *done, dma_cookie_t *used);
 void ioat_dma_unmap(struct ioat_chan_common *chan, enum dma_ctrl_flags flags,
 		    size_t len, struct ioat_dma_descriptor *hw);
 bool ioat_cleanup_preamble(struct ioat_chan_common *chan,

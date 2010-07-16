@@ -182,6 +182,16 @@ async_memcpy(struct page *dest, struct page *src, unsigned int dest_offset,
 	     unsigned int src_offset, size_t len,
 	     struct async_submit_ctl *submit);
 
+struct bio;
+
+struct dma_async_tx_descriptor *
+async_copy_biodata(int frombio, struct bio *bio, struct page *page, int order,
+		   sector_t sector, struct dma_async_tx_descriptor *tx);
+
+struct dma_async_tx_descriptor *
+async_copy_biodata(int frombio, struct bio *bio, struct page *page, int order,
+		   sector_t sector, struct dma_async_tx_descriptor *tx);
+
 struct dma_async_tx_descriptor *
 async_memset(struct page *dest, int val, unsigned int offset,
 	     size_t len, struct async_submit_ctl *submit);
