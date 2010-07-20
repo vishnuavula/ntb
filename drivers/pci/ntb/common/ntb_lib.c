@@ -4,7 +4,7 @@
  * 
  *   GPL LICENSE SUMMARY
  * 
- *   Copyright(c) 2007,2008,2009 Intel Corporation. All rights reserved.
+ *   Copyright(c) 2007,2008,2009,2010 Intel Corporation. All rights reserved.
  * 
  *   This program is free software; you can redistribute it and/or modify 
  *   it under the terms of version 2 of the GNU General Public License as
@@ -26,7 +26,7 @@
  * 
  *   BSD LICENSE 
  * 
- *   Copyright(c) 2007,2008,2009 Intel Corporation. All rights reserved.
+ *   Copyright(c) 2007,2008,2009, 2010 Intel Corporation. All rights reserved.
  *   All rights reserved.
  * 
  *   Redistribution and use in source and binary forms, with or without 
@@ -56,7 +56,7 @@
  *   OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  * 
  * 
- *  version: Embedded.Release.L.0.5.1-2
+ *  version: Embedded.Release.L.1.0.0-401
  *****************************************************************************/
 /*****************************************************************************
  * FILE CONTENTS: Functions private to the driver. These APIs will not
@@ -76,8 +76,6 @@ void ntb_lib_write_16(void *mm_regs, uint32_t offset, int16_t value)
 	if (offset >= NTB_PBAR_23_LIMIT_OFFSET) {
 		/* value, iomem address */
 		iowrite16(value, (char *)mm_regs + offset);
-		NTB_DEBUG_PRINT(("NTBC WRITE16 offset  %p\n",
-		((char *)mm_regs + offset)));
 	}
 }
 
@@ -107,14 +105,10 @@ void ntb_lib_write_64(void *mm_regs, uint64_t offset, uint64_t value)
 	uint32_t lower = value & LOWER_32;
 	uint32_t upper = value >> BIT_SHIFT_32;
 
-	NTB_DEBUG_PRINT(("NTBC WRITE64 VALUE  %Lx\n", value));
 	if (offset >= NTB_PBAR_23_LIMIT_OFFSET) {
-
-		iowrite32(lower, (uint8_t *)mm_regs + offset);
 		iowrite32(upper, (uint8_t *)mm_regs + offset + OFFSET_4);
+		iowrite32(lower, (uint8_t *)mm_regs + offset);
 
-		NTB_DEBUG_PRINT(("NTBC WRITE64 MMREGS  %p\n",
-				mm_regs));
 	}
 
 }
@@ -164,8 +158,7 @@ uint64_t ntb_lib_read_64(void *mm_regs, uint64_t offset)
 	if (offset >= NTB_PBAR_23_LIMIT_OFFSET) {
 		lower = ioread32((uint8_t *)mm_regs + offset);
 		reg_value = ioread32((uint8_t *)mm_regs + offset + OFFSET_4);
-		NTB_DEBUG_PRINT(("NTB: lib lower %x upper %Lx\n",
-		lower, reg_value));
+
 		reg_value = reg_value << BIT_SHIFT_32;
 		reg_value = reg_value | lower;
 

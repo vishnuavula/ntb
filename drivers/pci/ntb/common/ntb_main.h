@@ -4,7 +4,7 @@
 * 
 *   GPL LICENSE SUMMARY
 * 
-*   Copyright(c) 2007,2008,2009 Intel Corporation. All rights reserved.
+*   Copyright(c) 2007,2008,2009,2010 Intel Corporation. All rights reserved.
 * 
 *   This program is free software; you can redistribute it and/or modify 
 *   it under the terms of version 2 of the GNU General Public License as
@@ -26,7 +26,7 @@
 * 
 *   BSD LICENSE 
 * 
-*   Copyright(c) 2007,2008,2009 Intel Corporation. All rights reserved.
+*   Copyright(c) 2007,2008,2009, 2010 Intel Corporation. All rights reserved.
 *   All rights reserved.
 * 
 *   Redistribution and use in source and binary forms, with or without 
@@ -56,7 +56,7 @@
 *   OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 * 
 * 
-*  version: Embedded.Release.L.0.5.1-2
+*  version: Embedded.Release.L.1.0.0-401
 *****************************************************************************/
 
 #ifndef NTB_MAIN_H_
@@ -98,6 +98,26 @@
 #define NTB_DEBUG_PRINT(args)
 #endif
 
+
+#ifdef RH_5
+#define NTB_IRQ_HANDLER irqreturn_t ntb_irq_xxx(int irq, void *data, \
+struct pt_regs *regs)
+#else
+#define NTB_IRQ_HANDLER irqreturn_t ntb_irq_xxx(int irq, void *data)
+#endif
+
+#ifdef NTB_B2B
+#define PREFIX_STRING "NTB_B2B: "
+#endif
+
+#ifdef NTB_CLASSIC
+#define PREFIX_STRING "NTB_CLASSIC: "
+#endif
+
+#ifdef NTB_RP
+#define PREFIX_STRING "NTB_RP: "
+#endif
+
 enum ntb_irq_handle_index_t {
 	NTB_XXX_0     = 0,
 	NTB_XXX_1     = 1,
@@ -117,10 +137,10 @@ typedef irqreturn_t (*ntb_irq_handler_t)(int irq, void *data,
 
 #define MASK_36_BIT  0xFFFFFFF0
 
-#define SHIFT_LOWER  0xFFF
-#define UPPER_LIMIT  0x3FFFFFFF
-#define FULL_LIMIT   0x3FFFFFFFFFFFF000
-#define SHIFT_8        0x8
+#define SHIFT_LOWER     0xFFF
+#define UPPER_LIMIT     0x3FFFFFFF
+#define FULL_LIMIT      0x3FFFFFFFFFFFF000
+#define SHIFT_8         0x8
 #define LOWER_16        0xFFFF
 
 struct ntb_clients {
@@ -210,8 +230,6 @@ struct ntb_device {
 
 	uint16_t client_pm_acknowledgement;
 	uint32_t test_value;
-
-
 };
 
 void ntb_get_limit_settings(struct pci_dev *dev, enum ntb_bar_t bar,

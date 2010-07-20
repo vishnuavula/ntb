@@ -4,7 +4,7 @@
  * 
  *   GPL LICENSE SUMMARY
  * 
- *   Copyright(c) 2007,2008,2009 Intel Corporation. All rights reserved.
+ *   Copyright(c) 2007,2008,2009,2010 Intel Corporation. All rights reserved.
  * 
  *   This program is free software; you can redistribute it and/or modify 
  *   it under the terms of version 2 of the GNU General Public License as
@@ -26,7 +26,7 @@
  * 
  *   BSD LICENSE 
  * 
- *   Copyright(c) 2007,2008,2009 Intel Corporation. All rights reserved.
+ *   Copyright(c) 2007,2008,2009, 2010 Intel Corporation. All rights reserved.
  *   All rights reserved.
  * 
  *   Redistribution and use in source and binary forms, with or without 
@@ -56,7 +56,7 @@
  *   OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  * 
  * 
- *  version: Embedded.Release.L.0.5.1-2
+ *  version: Embedded.Release.L.1.0.0-401
  ****************************************************************************/
 
 
@@ -128,24 +128,21 @@ uint16_t bdf,
 struct ntb_client_data *client_data
 )
 {
-	struct ntb_client *new_client   = NULL;
-	ntb_client_handle_t handle      = NTB_UNUSED;
+	struct ntb_client *new_client	= NULL;
+	ntb_client_handle_t handle	= NTB_UNUSED;
 	struct ntb_clients *client_list = NULL;
-	uint32_t prefix                 = 0;
+	uint32_t prefix 		= 0;
 
 	client_list = ntb_get_client_list_by_bdf(bdf);
 
-	NTB_DEBUG_PRINT(
-	("NTB: INSIDE NTB_REGISTER_CLIENT BAR %x BDF %x\n",
-	bar, bdf));
+	NTB_DEBUG_PRINT(("%s Entering ntb_register_client\n", PREFIX_STRING));
+	NTB_DEBUG_PRINT(("%s BAR = %x BDF = %x\n", PREFIX_STRING, bar, bdf));
 
 	if (client_list == NULL) {
-		NTB_DEBUG_PRINT(
-		("NTB: NO CLIENT LIST\n"));
+		NTB_DEBUG_PRINT(("%s NO CLIENT LIST\n", PREFIX_STRING));
 		return -EINVAL;
 	}
-	NTB_DEBUG_PRINT(
-	("NTB: Client List %p\n", client_list));
+	NTB_DEBUG_PRINT(("%s Client List = %p\n", PREFIX_STRING, client_list));
 
 	spin_lock(&client_list->client_list_lock);
 
@@ -160,12 +157,12 @@ struct ntb_client_data *client_data
 			&client_list->clients[NTB_CLIENT_23];
 			client_list->number_used++;
 			NTB_DEBUG_PRINT(
-			("NTB: ALLOC 23 BAR HANDLE %x\n", handle));
+			("%s allocating 23 BAR HANDLE %x\n", PREFIX_STRING,
+			handle));
 		} else {
 			handle = -EINVAL;
 			spin_unlock(&client_list->client_list_lock);
-			NTB_DEBUG_PRINT(
-			("NTB: IN USE 23 BAR\n"));
+			NTB_DEBUG_PRINT(("%s 23 BAR in use\n", PREFIX_STRING));
 			return handle;
 		}
 	} else if (bar == NTB_BAR_45) {
@@ -179,19 +176,19 @@ struct ntb_client_data *client_data
 			&client_list->clients[NTB_CLIENT_45];
 			client_list->number_used++;
 			NTB_DEBUG_PRINT(
-			("NTB: ALLOC 45 BAR\n"));
+			("%s allocating 45 BAR HANDLE %x\n", PREFIX_STRING,
+			handle));
 	} else {
 			handle = -EINVAL;
 			spin_unlock(&client_list->client_list_lock);
-			NTB_DEBUG_PRINT(
-			("NTB: IN USE 45 BAR\n"));
+			NTB_DEBUG_PRINT(("%s 23 BAR in use\n", PREFIX_STRING));
 			return handle;
 		}
 	} else {
 			handle = -EINVAL;
 			spin_unlock(&client_list->client_list_lock);
 			NTB_DEBUG_PRINT(
-			("NTB: BAD BAR \n"));
+			("%s BAD BAR value\n", PREFIX_STRING));
 			return handle;
 	}
 
@@ -202,7 +199,8 @@ struct ntb_client_data *client_data
 
 	if (handle > NTB_UNUSED && client_data != NULL)
 		ntb_write_client_data(handle, new_client, client_data);
-
+	NTB_DEBUG_PRINT(
+	("%s Exiting ntb_register_client\n", PREFIX_STRING));
 	return handle;
 
 }
@@ -241,27 +239,25 @@ struct ntb_client_data *client_data)
  ****************************************************************************/
 int32_t ntb_unregister_client(ntb_client_handle_t handle)
 {
-	struct ntb_client *client       = NULL;
+	struct ntb_client *client	= NULL;
 	struct ntb_clients *client_list = NULL;
-	struct ntb_device *device       = NULL;
+	struct ntb_device *device	= NULL;
 
 	NTB_DEBUG_PRINT(
-	("NTB: INSIDE NTB_UNREGISTER_CLIENT\n"));
+	("%s Entering ntb_unregister_client \n", PREFIX_STRING));
 	device = ntb_get_device_by_handle(handle);
 
 	if (device == NULL) {
 		NTB_DEBUG_PRINT(
-			("NTB: NTB_UNREGISTER_CLIENT Error: Device NULL\n"));
+		("%s ERROR: DEVICE IS NULL\n", PREFIX_STRING));
 		return -EINVAL;
 	}
-	NTB_DEBUG_PRINT(
-	("NTB: DEVICE %p\n", device));
 
 	client_list = ntb_get_client_list_by_handle(handle);
 
 	if (client_list == NULL)
 		return -EINVAL;
-	NTB_DEBUG_PRINT(("NTB: CLIENT LIST %p\n", client_list));
+
 
 	spin_lock(&client_list->client_list_lock);
 
@@ -269,13 +265,15 @@ int32_t ntb_unregister_client(ntb_client_handle_t handle)
 		client_list->number_used--;
 		client = &client_list->clients[NTB_CLIENT_23];
 		NTB_DEBUG_PRINT(
-		("NTB: RELEASED 23 BAR  number_used: %d (decimal)\n",
+		("%s released 23 BAR number of BARs used: %d (decimal)\n",
+		PREFIX_STRING,
 		client_list->number_used));
 	} else if (client_list->clients[NTB_CLIENT_45].handle == handle) {
 		client_list->number_used--;
 		client = &client_list->clients[NTB_CLIENT_45];
 		NTB_DEBUG_PRINT(
-		("NTB: RELEASED 45 BAR  number_used: %d (decimal)\n",
+		("%s released 45 BAR number of BARs used: %d (decimal)\n",
+		PREFIX_STRING,
 		client_list->number_used));
 	} else {
 
@@ -286,7 +284,7 @@ int32_t ntb_unregister_client(ntb_client_handle_t handle)
 
 
 	if (client != NULL) {
-		NTB_DEBUG_PRINT(("NTB: RELEASE CLIENT DATA\n"));
+		NTB_DEBUG_PRINT(("%s releasing client data\n", PREFIX_STRING));
 		if (client->handle == client_list->semaphore_owner)
 			ntb_release_semaphore(client->handle);
 
@@ -296,14 +294,16 @@ int32_t ntb_unregister_client(ntb_client_handle_t handle)
 		client->client_data.limit = 0;
 		client->client_data.translate_address = 0;
 
-		if ((handle & NTB_BAR_23) != 0) {
+		if ((handle & NTB_BAR_23) != 0)
 			device->policy_bits_23 = 0;
-		} else if ((handle & NTB_BAR_45) != 0) {
+		else if ((handle & NTB_BAR_45) != 0)
 			device->policy_bits_45 = 0;
-		}
 	}
 
 	spin_unlock(&client_list->client_list_lock);
+
+	NTB_DEBUG_PRINT(
+	("%s Exiting ntb_unregister_client \n", PREFIX_STRING));
 
 	return SUCCESS;
 
@@ -322,17 +322,20 @@ int32_t ntb_write_doorbell(ntb_client_handle_t handle, uint16_t value)
 {
 
 	struct ntb_device *device = NULL;
-	uint16_t doorbell         = 0;
+	uint16_t doorbell	  = 0;
 
-	NTB_DEBUG_PRINT(("NTB: INSIDE NTB_WRITE_DOORBELL \n"));
+	NTB_DEBUG_PRINT(("%s Entering ntb_write_doorbell \n", PREFIX_STRING));
 
 	device = ntb_get_device_by_handle(handle);
 
-	if (device == NULL)
+	if (device == NULL) {
+		NTB_DEBUG_PRINT(
+		("%s ERROR: DEVICE IS NULL\n", PREFIX_STRING));
 		return -EINVAL;
+	}
 
-	NTB_DEBUG_PRINT(("NTB: doorbell offset %x value to write %x\n",
-	device->doorbell_offset, value));
+	NTB_DEBUG_PRINT(("%s doorbell offset %x value to write %x\n",
+	PREFIX_STRING, device->doorbell_offset, value));
 
 	ntb_lib_write_16(device->mm_regs,
 	device->doorbell_offset,
@@ -341,7 +344,10 @@ int32_t ntb_write_doorbell(ntb_client_handle_t handle, uint16_t value)
 	doorbell = ntb_lib_read_16(device->mm_regs,
 			device->doorbell_offset);
 
-	NTB_DEBUG_PRINT(("NTB: doorbell after write %x\n", doorbell));
+	NTB_DEBUG_PRINT(("%s doorbell after write %x\n", PREFIX_STRING,
+	doorbell));
+
+	NTB_DEBUG_PRINT(("%s Exiting ntb_write_doorbell \n", PREFIX_STRING));
 
 	return SUCCESS;
 }
@@ -362,7 +368,7 @@ int32_t ntb_set_snoop_level(ntb_client_handle_t handle, uint32_t value)
 	uint32_t read_val = 0;
 
 	device = ntb_get_device_by_handle(handle);
-
+	NTB_DEBUG_PRINT(("%s Entering ntb_set_snoop_level \n", PREFIX_STRING));
 	if (device == NULL)
 		return -EINVAL;
 
@@ -376,15 +382,16 @@ int32_t ntb_set_snoop_level(ntb_client_handle_t handle, uint32_t value)
 			read_val &= ~NTB_23_SNOOP_MASK;
 
 		read_val |= value;
-		NTB_DEBUG_PRINT(
-			("NTB: Set Snoop Level value: 0x%x\n", read_val));
+		NTB_DEBUG_PRINT(("%s Set Snoop Level value: 0x%x\n",
+		PREFIX_STRING, read_val));
 
 		ntb_lib_write_32(device->mm_regs, NTB_CNTL_OFFSET, read_val);
 	} else {
+		NTB_DEBUG_PRINT(("%s INVALID SNOOP LEVEL \n", PREFIX_STRING));
 		return -EPERM;
 	}
 
-
+	NTB_DEBUG_PRINT(("%s Exiting ntb_set_snoop_level \n", PREFIX_STRING));
 	return SUCCESS;
 }
 
@@ -403,28 +410,32 @@ uint64_t address)
 {
 
 	struct ntb_device *device = NULL;
-	enum ntb_bar_t bar        = ntb_compare_handle_bar(handle);
+	enum ntb_bar_t bar	  = ntb_compare_handle_bar(handle);
 
 	device = ntb_get_device_by_handle(handle);
+	NTB_DEBUG_PRINT(("%s Entering ntb_write_translate \n", PREFIX_STRING));
 
-	NTB_DEBUG_PRINT(("NTB: WRITE TRANSLATE ADDRESS VALUE offset %Lx\n",
-		address));
+	NTB_DEBUG_PRINT(("%s translate address value: %Lx\n",
+	PREFIX_STRING, address));
 
 	if (device == NULL)
 		return -EINVAL;
 
-	if (address != 0) {
-		if (bar == NTB_BAR_23) {
-			ntb_lib_write_64(device->mm_regs,
-			device->bar_23_translate_offset, address);
-			return SUCCESS;
-		} else if (bar == NTB_BAR_45) {
-			ntb_lib_write_64(device->mm_regs,
-			device->bar_45_translate_offset, address);
-			return SUCCESS;
-		}
-
+	if (bar == NTB_BAR_23) {
+		ntb_lib_write_64(device->mm_regs,
+		device->bar_23_translate_offset, address);
+		NTB_DEBUG_PRINT(("%s Exiting ntb_write_translate \n",
+		PREFIX_STRING));
+		return SUCCESS;
+	} else if (bar == NTB_BAR_45) {
+		ntb_lib_write_64(device->mm_regs,
+		device->bar_45_translate_offset, address);
+		NTB_DEBUG_PRINT(("%s Exiting ntb_write_translate \n",
+		PREFIX_STRING));
+		return SUCCESS;
 	}
+
+
 
 	return -EPERM;
 }
@@ -442,13 +453,12 @@ int32_t ntb_write_limit(ntb_client_handle_t handle, uint64_t value)
 {
 
 	struct ntb_device *device = NULL;
-	uint64_t limit_setting    = 0;
-	enum ntb_bar_t bar        = ntb_compare_handle_bar(handle);
+	uint64_t limit_setting	  = 0;
+	enum ntb_bar_t bar	  = ntb_compare_handle_bar(handle);
 
 	device = ntb_get_device_by_handle(handle);
+	NTB_DEBUG_PRINT(("%s Entering ntb_write_limit\n", PREFIX_STRING));
 
-	NTB_DEBUG_PRINT(("NTB: INSIDE NTB_WRITE_LIMIT dev %p \n",
-	device));
 
 	if (device == NULL)
 		return -EINVAL;
@@ -458,34 +468,41 @@ int32_t ntb_write_limit(ntb_client_handle_t handle, uint64_t value)
 	else if (handle & NTB_BAR_45)
 		limit_setting = device->limit_max_45;
 
-	if (limit_setting <= 0)
+	NTB_DEBUG_PRINT(("%s Value =  %Lx Limit Settings =  %Lx \n",
+		PREFIX_STRING,
+		value, limit_setting));
+
+	if (limit_setting <= 0) {
+		NTB_DEBUG_PRINT(("%s LIMIT <= 0 \n", PREFIX_STRING));
 		return -EPERM;
+	}
 
 	if (value == 0 || value > limit_setting) {
-		NTB_DEBUG_PRINT(("NTB: Limit out of bounds \n"));
-		NTB_DEBUG_PRINT(("NTB: Value %Lx Limit Settings %Lx \n",
-		value, limit_setting));
+		NTB_DEBUG_PRINT(("%s LIMIT OUT OF BOUNDS \n", PREFIX_STRING));
+
 		return -EINVAL;
 	}
 
 	if ((value & ALIGNMENT_CHECK) != 0) {
-		NTB_DEBUG_PRINT(("NTB: Limit unaligned\n"));
-		NTB_DEBUG_PRINT(("NTB: Value %Lx Limit Settings %Lx \n",
-		value, limit_setting));
+		NTB_DEBUG_PRINT(("%s LIMIT UNALIGNED\n", PREFIX_STRING));
 		return -EINVAL;
 	}
 
-	NTB_DEBUG_PRINT(("NTB: INSIDE NTB_WRITE_LIMIT WRITING VALUE %Lx\n",
+	NTB_DEBUG_PRINT(("%s writing value = %Lx\n", PREFIX_STRING,
 	value + device->limit_base_23));
 	if (bar == NTB_BAR_23) {
 		ntb_lib_write_64(device->mm_regs,
 		device->bar_23_limit_offset, value
 		+ device->limit_base_23);
+		NTB_DEBUG_PRINT(("%s Exiting ntb_write_limit\n",
+		PREFIX_STRING));
 		return SUCCESS;
 	} else if (bar == NTB_BAR_45) {
 		ntb_lib_write_64(device->mm_regs,
 		device->bar_45_limit_offset, value
 		+ device->limit_base_45);
+		NTB_DEBUG_PRINT(("%s Exiting ntb_write_limit\n",
+		PREFIX_STRING));
 		return SUCCESS;
 	}
 
@@ -505,19 +522,16 @@ int32_t ntb_write_limit(ntb_client_handle_t handle, uint64_t value)
 uint64_t ntb_read_limit(ntb_client_handle_t handle)
 {
 
-	uint64_t limit            = 0;
+	uint64_t limit		  = 0;
 	struct ntb_device *device = NULL;
-	enum ntb_bar_t bar        = ntb_compare_handle_bar(handle);
+	enum ntb_bar_t bar	  = ntb_compare_handle_bar(handle);
 
 	device = ntb_get_device_by_handle(handle);
 
 	if (device == NULL)
 		return -EINVAL;
 
-	NTB_DEBUG_PRINT(("NTB: INSIDE NTB_READ_LIMIT dev %p \n",
-			device));
-	NTB_DEBUG_PRINT(("NTB: READ LIMIT VALUE offset %x\n",
-			device->bar_23_limit_offset));
+	NTB_DEBUG_PRINT(("%s Entering ntb_read_limit\n", PREFIX_STRING));
 
 	if (bar == NTB_BAR_23) {
 		limit = ntb_lib_read_64(device->mm_regs,
@@ -529,7 +543,8 @@ uint64_t ntb_read_limit(ntb_client_handle_t handle)
 		device->bar_45_limit_offset);
 		limit -= device->limit_base_45;
 	}
-
+	NTB_DEBUG_PRINT(("%s Limit = %Lx \n", PREFIX_STRING, limit));
+	NTB_DEBUG_PRINT(("%s Exiting ntb_read_limit\n", PREFIX_STRING));
 	return limit;
 
 }
@@ -552,25 +567,36 @@ struct scratchpad_registers *values, ntb_client_handle_t handle)
 	device = ntb_get_device_by_handle(handle);
 
 	NTB_DEBUG_PRINT(
-	("NTB: INSIDE NTB_WRITE_PAD_MANY\n"));
+	("%s Entering ntb_write_scratch_pad_many\n", PREFIX_STRING));
 
-	if (device == NULL)
+	if (device == NULL) {
+		NTB_DEBUG_PRINT(
+		("%s DEVICE IS NULL\n", PREFIX_STRING));
 		return -EINVAL;
+	}
 
-	if ((how_many == 0) || (how_many > NTB_TOTAL_SCRATCHPAD_NO))
+	if ((how_many == 0) || (how_many > NTB_TOTAL_SCRATCHPAD_NO)) {
+		NTB_DEBUG_PRINT(
+		("%s SCRATCHPAD NUMBER OUT OF BOUNDS\n", PREFIX_STRING));
 		return -EINVAL;
+	}
 
 	/* If in B2B mode, it doesn't matter if you own the sema4.*/
 	if (device->scratchpad_offset_write == NTB_B2B_SCRATCHPAD_OFFSET) {
 		ntb_lib_write_rep(device->mm_regs,
 		device->scratchpad_offset_write, (void *)(values),
 		how_many);
+		NTB_DEBUG_PRINT(
+		("%s Exiting ntb_write_scratch_pad_many\n", PREFIX_STRING));
 		return SUCCESS;
 	} else {
 		if (device->client_list.semaphore_owner == handle) {
 			ntb_lib_write_rep(device->mm_regs,
 			device->scratchpad_offset_write, (void *)(values),
 			how_many);
+			NTB_DEBUG_PRINT(
+			("%s Exiting ntb_write_scratch_pad_many\n",
+			PREFIX_STRING));
 			return SUCCESS;
 		} else {
 			return -EPERM;
@@ -597,7 +623,8 @@ ntb_client_handle_t handle)
 
 	device = ntb_get_device_by_handle(handle);
 
-	NTB_DEBUG_PRINT(("NTB: INSIDE NTB_WRITE_PAD_ONE\n"));
+	NTB_DEBUG_PRINT(("%s Entering ntb_write_scratch_pad_one\n",
+	PREFIX_STRING));
 
 	if (index >= NTB_TOTAL_SCRATCHPAD_NO)
 		return -EINVAL;
@@ -610,12 +637,18 @@ ntb_client_handle_t handle)
 		ntb_lib_write_32(device->mm_regs,
 		device->scratchpad_offset_write
 		+ (index * sizeof(uint32_t)), value);
+		NTB_DEBUG_PRINT(
+		("%s Exiting ntb_write_scratch_pad_one\n",
+		PREFIX_STRING));
 		return SUCCESS;
 	} else {
 		if (device->client_list.semaphore_owner == handle) {
 			ntb_lib_write_32(device->mm_regs,
 				device->scratchpad_offset_write
 				+ (index * sizeof(uint32_t)), value);
+				NTB_DEBUG_PRINT(
+				("%s Exiting ntb_write_scratch_pad_one\n",
+				PREFIX_STRING));
 				return SUCCESS;
 		} else {
 			return -EPERM;
@@ -626,6 +659,70 @@ ntb_client_handle_t handle)
 
 }
 
+
+#ifdef B0_SI_SOLN_CL
+/*****************************************************************************
+ * Description: fills up a scratch pad with MSIX table info.
+ *
+ * Side Effects:
+ * Assumptions:
+ * Return Values: No return
+ ****************************************************************************/
+void ntb_store_msix(struct pci_dev *dev, struct ntb_device *device,
+struct scratchpad_registers *pad)
+{
+	int32_t i = 0;
+	uint32_t table_offset = NTB_SEC_MSIX_MAP;
+
+	for (i = 0; i < NTB_TOTAL_SCRATCHPAD_NO; i++) {
+		pad->registers[i]  =
+			ntb_lib_read_32(device->mm_regs,
+			table_offset + (i * sizeof(uint32_t)));
+		NTB_DEBUG_PRINT(("%s MSIX Register %x\n", PREFIX_STRING,
+			pad->registers[i]));
+	}
+}
+
+/*****************************************************************************
+ * Abstract
+ * Reads remote MSIX config data into a scratchpad like structure.
+ *
+ * Side Effects:
+ * Assumptions:
+ * Return Values: 0 successful,
+ * -EINVAL wrong parameter supplied,
+ ****************************************************************************/
+int32_t ntb_read_remote_msix(struct scratchpad_registers *pad,
+ntb_client_handle_t handle)
+{
+	struct ntb_device *device = NULL;
+
+	device = ntb_get_device_by_handle(handle);
+
+	NTB_DEBUG_PRINT(("%s Entering ntb_read_remote_msix\n",
+		PREFIX_STRING));
+
+	if (pad == NULL) {
+		NTB_DEBUG_PRINT(
+			("%s  ntb_read_remote_msix NULL scratchpad ptr\n",
+			PREFIX_STRING));
+		return -EINVAL;
+	}
+
+	if (device == NULL) {
+		NTB_DEBUG_PRINT(("%s  ntb_read_remote_msix BAD handle\n",
+		PREFIX_STRING));
+		return -EINVAL;
+	}
+
+	ntb_store_msix(device->dev, device, pad);
+
+	NTB_DEBUG_PRINT(("%s Exiting ntb_read_remote_msix\n",
+		PREFIX_STRING));
+
+	return SUCCESS;
+}
+#endif
 /*****************************************************************************
  * Abstract
  * Reads multiple scratch pad registers.
@@ -642,6 +739,9 @@ struct scratchpad_registers *pad, ntb_client_handle_t handle)
 
 	device = ntb_get_device_by_handle(handle);
 
+	NTB_DEBUG_PRINT(("%s Entering ntb_read_scratch_pad_many\n",
+	PREFIX_STRING));
+
 	if (pad == NULL)
 		return -EINVAL;
 
@@ -655,8 +755,11 @@ struct scratchpad_registers *pad, ntb_client_handle_t handle)
 	device->scratchpad_offset_read,
 	(void *)(&pad->registers), how_many);
 
-	NTB_DEBUG_PRINT(("NTB: READ_SCRATCHPAD_MANY %x %x\n",
+	NTB_DEBUG_PRINT(("%s pad[0] = %x pad [1] = %x\n", PREFIX_STRING,
 	pad->registers[0], pad->registers[1]));
+
+	NTB_DEBUG_PRINT(("%s Exiting ntb_read_scratch_pad_many\n",
+	PREFIX_STRING));
 
 	return SUCCESS;
 
@@ -676,6 +779,9 @@ ntb_client_handle_t handle)
 	uint32_t offset = 0;
 	struct ntb_device *device = NULL;
 
+	NTB_DEBUG_PRINT(("%s Entering ntb_read_scratch_pad_one\n",
+		PREFIX_STRING));
+
 	device = ntb_get_device_by_handle(handle);
 
 	if (index >= NTB_TOTAL_SCRATCHPAD_NO)
@@ -688,15 +794,14 @@ ntb_client_handle_t handle)
 		return -EINVAL;
 
 	NTB_DEBUG_PRINT(
-	("NTB: READ_SCRATCHPAD_MANY starting offset %x offset %x value %x\n",
+	("%s starting offset %x offset %x value %x\n", PREFIX_STRING,
 	device->scratchpad_offset_read, offset, *value));
 
 	offset = device->scratchpad_offset_read + (index * sizeof(int32_t));
 	*value = ntb_lib_read_32(device->mm_regs, offset);
 
-	NTB_DEBUG_PRINT(
-	("NTB: READ_SCRATCHPAD_MANY starting offset %x offset %x value %x\n",
-	device->scratchpad_offset_read, offset, *value));
+	NTB_DEBUG_PRINT(("%s Exiting ntb_read_scratch_pad_one\n",
+	PREFIX_STRING));
 
 	return SUCCESS;
 
@@ -715,9 +820,12 @@ ntb_client_handle_t handle)
 int16_t ntb_get_link_status(ntb_client_handle_t handle)
 {
 	struct ntb_device *device = NULL;
-	int16_t link_status       = 0;
+	int16_t link_status	  = 0;
 
 	device = ntb_get_device_by_handle(handle);
+
+	NTB_DEBUG_PRINT(("%s Entering ntb_get_link_status\n",
+			PREFIX_STRING));
 
 	if (device == NULL)
 		return -EINVAL;
@@ -731,13 +839,14 @@ int16_t ntb_get_link_status(ntb_client_handle_t handle)
 			&link_status);
 
 	NTB_DEBUG_PRINT(
-	("NTB: Get Link Status: LinkStatusOffset: 0x%x\n",
+	("%s  Link Status Offset: 0x%x\n", PREFIX_STRING,
 	device->link_status_offset));
-	NTB_DEBUG_PRINT(("NTB: Get Link Status: LinkStatus: 0x%x\n",
+	NTB_DEBUG_PRINT(("%s Get Link Status: 0x%x\n",
+	PREFIX_STRING,
 	link_status));
 
 
-	if (link_status & LINK_STATUS_ACTIVE)
+	if (link_status & LINK_STATUS_ACTIVE) {
 		device->link_status = LINK_UP;
 		if ((device->dev_type == NTB_DEV_TYPE_CLASSIC) ||
 		    (device->dev_type == NTB_DEV_TYPE_B2B)) {
@@ -748,7 +857,8 @@ int16_t ntb_get_link_status(ntb_client_handle_t handle)
 		}
 	} else
 		device->link_status = LINK_DOWN;
-
+	NTB_DEBUG_PRINT(("%s Exiting ntb_get_link_status\n",
+				PREFIX_STRING));
 	return device->link_status;
 
 }
@@ -763,33 +873,32 @@ int16_t ntb_get_link_status(ntb_client_handle_t handle)
  *****************************************************************************/
 int32_t ntb_set_link_status(ntb_client_handle_t handle, enum link_t status)
 {
-	int32_t read_status       = 0;
+	int32_t read_status	  = 0;
 	struct ntb_device *device = NULL;
 
-	NTB_DEBUG_PRINT(("NTB: Set Link Status: LinkStatus: 0x%x\n",
-	status));
+	NTB_DEBUG_PRINT(("%s Entering ntb_set_link_status\n",
+		PREFIX_STRING));
 
 	device = ntb_get_device_by_handle(handle);
+
 	if (device == NULL)
 		return -EINVAL;
 
 	if ((status == SET_LINK_DOWN) || (status ==  SET_LINK_UP)) {
-	read_status = ntb_lib_read_32(device->mm_regs,
-		device->link_control_offset);
-
-		NTB_DEBUG_PRINT(("NTB: Read Link Status: LinkStatus: 0x%x\n",
-		read_status));
+		read_status = ntb_lib_read_32(device->mm_regs,
+			device->link_control_offset);
 
 		read_status = ~read_status & status;
 
-		NTB_DEBUG_PRINT(("NTB: Read Link Status: LinkStatus: 0x%x\n",
+		NTB_DEBUG_PRINT(("%s Setting Link Status 0x%x\n",
+		PREFIX_STRING,
 		read_status));
 
-		NTB_DEBUG_PRINT(("NTB: Setting Link Status 0x%x\n",
-		read_status));
 		ntb_lib_write_32(device->mm_regs,
 			device->link_control_offset, read_status);
 
+		NTB_DEBUG_PRINT(("%s Exiting ntb_set_link_status\n",
+				PREFIX_STRING));
 		return SUCCESS;
 
 	} else {
@@ -810,31 +919,37 @@ int32_t ntb_set_link_status(ntb_client_handle_t handle, enum link_t status)
  *****************************************************************************/
 int32_t ntb_obtain_semaphore(ntb_client_handle_t handle)
 {
-	uint32_t value            = 0;
+	uint32_t value		  = 0;
 	struct ntb_device *device = NULL;
 
 	device = ntb_get_device_by_handle(handle);
 	if (device == NULL)
 		return -EINVAL;
 
-	NTB_DEBUG_PRINT(("NTB: INSIDE NTB_OBTAIN_SEMA4\n"));
+	NTB_DEBUG_PRINT(("%s Entering ntb_obtain_semaphore\n",
+			PREFIX_STRING));
 	if (device->client_list.semaphore_owner == handle) {
-		NTB_DEBUG_PRINT(("NTB: Already have semaphore\n"));
+		NTB_DEBUG_PRINT(("%s Already have semaphore\n",
+		PREFIX_STRING));
+		NTB_DEBUG_PRINT(("%s Exiting ntb_obtain_semaphore\n",
+				PREFIX_STRING));
 		return SUCCESS;
 	}
 
 	if (device->client_list.semaphore_owner == NTB_UNUSED) {
 		value = ntb_lib_read_32(device->mm_regs,
 		device->semaphore_offset);
-		NTB_DEBUG_PRINT(("NTB: INSIDE NTB_OBTAIN_SEMA4 %x\n", value));
+		NTB_DEBUG_PRINT(("%s value %x\n", PREFIX_STRING, value));
 		device->client_list.semaphore_owner = handle;
-		NTB_DEBUG_PRINT(("NTB: semaphore_owner %x\n",
+		NTB_DEBUG_PRINT(("%s semaphore_owner %x\n", PREFIX_STRING,
 		device->client_list.semaphore_owner));
+		NTB_DEBUG_PRINT(("%s Exiting ntb_obtain_semaphore\n",
+		PREFIX_STRING));
 		return SUCCESS;
 	}
 
 
-	NTB_DEBUG_PRINT(("NTB: NTB_OBTAIN_SEMA4 - TRY AGAIN\n"));
+	NTB_DEBUG_PRINT(("%s NTB_OBTAIN_SEMA4 - TRY AGAIN\n", PREFIX_STRING));
 
 	return -EAGAIN; /* try again */
 
@@ -854,36 +969,43 @@ int32_t ntb_release_semaphore(ntb_client_handle_t handle)
 	struct ntb_device *device = NULL;
 	device = ntb_get_device_by_handle(handle);
 
-	NTB_DEBUG_PRINT(("NTB: INSIDE NTB_RELEASE_SEMA4\n"));
+	NTB_DEBUG_PRINT(("%s Entering ntb_release_semaphore\n",
+				PREFIX_STRING));
 
 	device = ntb_get_device_by_handle(handle);
 
 	if (device == NULL)
 		return -EINVAL;
 
-	NTB_DEBUG_PRINT(("NTB: Owner %x\n",
+	NTB_DEBUG_PRINT(("%s Owner = %x\n", PREFIX_STRING,
 	device->client_list.semaphore_owner));
 	if (device != NULL) {
 		if (device->client_list.semaphore_owner == handle) {
 			if (device->client_list.semaphore_owner
 			!= NTB_UNUSED){
-				NTB_DEBUG_PRINT(("NTB: RELEASING_SEMA4\n"));
+				NTB_DEBUG_PRINT(("%s releasing semafore\n",
+				PREFIX_STRING));
 				ntb_lib_write_32(device->mm_regs,
 					device->semaphore_offset,
 					SEMAPHORE_ONE_TO_CLEAR);
 				device->client_list.semaphore_owner
 					= NTB_UNUSED;
-				NTB_DEBUG_PRINT(("NTB: RELEASED SEMAPHORE\n"));
+				NTB_DEBUG_PRINT((
+				"%s Exiting ntb_release_semaphore\n",
+				PREFIX_STRING));
+
 				return SUCCESS;
 			} else {
-				NTB_DEBUG_PRINT(("NTB: WRONG SEMA4 OWNER\n"));
+				NTB_DEBUG_PRINT(("%s WRONG SEMA4 OWNER\n",
+				PREFIX_STRING));
 				return -EINVAL;
 			}
 		} else {
-			NTB_DEBUG_PRINT(("NTB: NOT OWNER\n"));
+			NTB_DEBUG_PRINT(("%s NOT OWNER\n", PREFIX_STRING));
 			return -EINVAL;
 		}
 	}
+	NTB_DEBUG_PRINT(("%s Exiting ntb_release_semaphore\n", PREFIX_STRING));
 	return SUCCESS;
 }
 
@@ -906,10 +1028,10 @@ uint16_t power_event_bit,
 uint16_t power_notification_bit)
 {
 	struct ntb_device *device = NULL;
-	uint16_t add_on_policy    = 0;
-	int32_t ret               = SUCCESS;
+	uint16_t add_on_policy	  = 0;
+	int32_t ret		  = SUCCESS;
 
-	NTB_DEBUG_PRINT(("NTB: ADD POLICY: Entry\n"));
+	NTB_DEBUG_PRINT(("%s Entering ntb_add_policy\n", PREFIX_STRING));
 
 	add_on_policy = (heartbeat_bit |
 	bar_bits | power_event_bit | power_notification_bit);
@@ -922,7 +1044,7 @@ uint16_t power_notification_bit)
 
 	device = ntb_get_device_by_handle(handle);
 	if (device == NULL) {
-		NTB_DEBUG_PRINT(("NTB: ADD POLICY- NULL Device Returned\n"));
+		NTB_DEBUG_PRINT(("%s DEVICE IS NULL\n", PREFIX_STRING));
 		return -EINVAL;
 	}
 
@@ -939,6 +1061,7 @@ uint16_t power_notification_bit)
 	} else
 		return -EINVAL;
 
+	NTB_DEBUG_PRINT(("%s Exiting ntb_add_policy\n", PREFIX_STRING));
 	return ret;
 }
 
@@ -956,22 +1079,22 @@ int32_t ntb_reset_policy(ntb_client_handle_t handle)
 {
 	struct ntb_device *device = NULL;
 
+	NTB_DEBUG_PRINT(("%s Entering ntb_reset_policy\n", PREFIX_STRING));
 	device = ntb_get_device_by_handle(handle);
 	if (device == NULL) {
-		NTB_DEBUG_PRINT(("NTB: RESET POLICY- NULL Device Returned\n"));
+		NTB_DEBUG_PRINT(("%s RESET POLICY- DEVICE IS NULL\n",
+		PREFIX_STRING));
 		return -EINVAL;
 	}
 
-
-	NTB_DEBUG_PRINT(("NTB: RESET POLICY\n"));
-	if ((handle & NTB_BAR_23) != 0) {
+	if ((handle & NTB_BAR_23) != 0)
 		device->policy_bits_23 = 0;
-	} else if ((handle & NTB_BAR_45) != 0) {
+	else if ((handle & NTB_BAR_45) != 0)
 		device->policy_bits_45 = 0;
-	} else {
+	else
 		return -EINVAL;
-	}
 
+	NTB_DEBUG_PRINT(("%s Exiting ntb_reset_policy\n", PREFIX_STRING));
 	return SUCCESS;
 }
 
@@ -984,21 +1107,22 @@ int32_t ntb_reset_policy(ntb_client_handle_t handle)
  * Return Values: 0 successful,
  * -EINVAL wrong parameter supplied,
 *****************************************************************************/
-uint16_t ntb_get_policy(ntb_client_handle_t handle)
+int16_t ntb_get_policy(ntb_client_handle_t handle)
 {
-	int16_t ret               = 0;
+	int16_t ret		  = 0;
 	struct ntb_device *device = NULL;
-
+	NTB_DEBUG_PRINT(("%s Entering ntb_get_policy\n", PREFIX_STRING));
 	device = ntb_get_device_by_handle(handle);
 	if (device == NULL) {
-		NTB_DEBUG_PRINT(("NTB: GET POLICY- NULL Device Returned\n"));
+		NTB_DEBUG_PRINT(("%s DEVICE IS NULL\n", PREFIX_STRING));
 		return -EINVAL;
 	}
 
 	ret = device->policy_bits_23 | device->policy_bits_45;
 
-	NTB_DEBUG_PRINT(("NTB: POLICY RETURNED: 0x%x (%d)\n", ret, ret));
-
+	NTB_DEBUG_PRINT(("%s policy : 0x%x (%d)\n", PREFIX_STRING,
+	ret, ret));
+	NTB_DEBUG_PRINT(("%s Exiting ntb_get_policy\n", PREFIX_STRING));
 	return ret;
 }
 
@@ -1020,20 +1144,16 @@ uint32_t *next_bar)
 	int32_t i = 0;
 
 
-	NTB_DEBUG_PRINT(
-	("NTB_GET_NEXT_BDF \n"));
+	NTB_DEBUG_PRINT(("%s Entering ntb_get_next_bdf\n", PREFIX_STRING));
 
 	if (next_bdf == NULL || next_bar == NULL)
 		return -EINVAL;
 
 	if (*next_bdf == 0) {
 		device = ntb_get_device(i);
-		NTB_DEBUG_PRINT(
-		("NTB FIRST BDF \n"));
 	} else {
 
-		NTB_DEBUG_PRINT(
-		("NTB FINDING PLACE IN LIST\n"));
+
 		device = ntb_get_device(i);
 		while (device->bdf != *next_bdf && i < MAX_DEVICES) {
 
@@ -1049,6 +1169,8 @@ uint32_t *next_bar)
 		if (device->device_state != ENUMERATED) {
 			*next_bar = 0;
 			*next_bdf = 0;
+			NTB_DEBUG_PRINT(("%s Exiting ntb_get_next_bdf\n",
+			PREFIX_STRING));
 			return SUCCESS;
 		}
 
@@ -1062,10 +1184,13 @@ uint32_t *next_bar)
 			if (*next_bar == NTB_BAR_23) {
 				if (client_list->clients[NTB_CLIENT_45].handle
 					== NTB_UNUSED) {
-					NTB_DEBUG_PRINT(("NTB: BAR 45 \n"));
 					*next_bar = NTB_BAR_45;
 					*next_bdf =
-					client_list->clients[NTB_CLIENT_45].bdf;
+					client_list->
+					clients[NTB_CLIENT_45].bdf;
+					NTB_DEBUG_PRINT((
+					"%s Exiting ntb_get_next_bdf\n",
+					PREFIX_STRING));
 					return SUCCESS;
 				}
 
@@ -1079,7 +1204,9 @@ uint32_t *next_bar)
 	}
 
 	while (i < MAX_DEVICES) {
-		NTB_DEBUG_PRINT(("NTB: CHECKING FOR BDF/BAR COMBOS \n"));
+		NTB_DEBUG_PRINT((
+		"%s checking for BAR BDF combos \n",
+		PREFIX_STRING));
 
 		if (device == NULL) {
 			*next_bar = 0;
@@ -1104,8 +1231,8 @@ uint32_t *next_bar)
 			*next_bar = NTB_BAR_23;
 			*next_bdf =
 			client_list->clients[NTB_CLIENT_23].bdf;
-			NTB_DEBUG_PRINT(
-			("NTB BAR 23 %x BDF %x %p %p\n",
+			NTB_DEBUG_PRINT(("%s NTB BAR 23 %x BDF %x %p %p\n",
+			PREFIX_STRING,
 			*next_bar, *next_bdf, next_bar, next_bdf));
 			return SUCCESS;
 
@@ -1114,8 +1241,9 @@ uint32_t *next_bar)
 			*next_bar = NTB_BAR_45;
 			*next_bdf =
 			client_list->clients[NTB_CLIENT_45].bdf;
-			NTB_DEBUG_PRINT(
-			("NTB BAR 45 %x BDF %x \n", *next_bar, *next_bdf));
+			NTB_DEBUG_PRINT(("%s NTB BAR 45 %x BDF %x \n",
+			PREFIX_STRING,
+			*next_bar, *next_bdf));
 			return SUCCESS;
 		}
 
@@ -1123,7 +1251,7 @@ uint32_t *next_bar)
 		i++;
 	}
 	NTB_DEBUG_PRINT(
-	("NTB: No more BDFs available \n"));
+	("%s No more BDFs available \n", PREFIX_STRING));
 
 	*next_bar = 0;
 	*next_bdf = 0;
@@ -1148,11 +1276,14 @@ int32_t ntb_get_number_unused_bdfs(void)
 	int32_t i = 0;
 	int32_t counter = 0;
 
+	NTB_DEBUG_PRINT(("%s Entering ntb_get_number_unused_bdfs\n",
+		PREFIX_STRING));
 	while (i < MAX_DEVICES) {
 
 		device = ntb_get_device(i);
 		if (device == NULL) {
-			NTB_DEBUG_PRINT(("NTB: device == null\n"));
+			NTB_DEBUG_PRINT(("%s DEVICE IS NULL\n",
+			PREFIX_STRING));
 			return -EPERM;
 		}
 
@@ -1176,7 +1307,10 @@ int32_t ntb_get_number_unused_bdfs(void)
 		}
 		i++;
 	}
-	NTB_DEBUG_PRINT(("NTB: Number BDFs available %x\n", counter));
+	NTB_DEBUG_PRINT(("%s Number of BDFs available is %x\n", PREFIX_STRING,
+	counter));
+	NTB_DEBUG_PRINT(("%s Exiting ntb_get_number_unused_bdfs\n",
+	PREFIX_STRING));
 	return counter;
 }
 
@@ -1194,11 +1328,17 @@ int32_t ntb_write_wccntrl_bit(ntb_client_handle_t handle)
 	struct ntb_device *device = NULL;
 	device = ntb_get_device_by_handle(handle);
 
+	NTB_DEBUG_PRINT(("%s Entering ntb_write_wccntrl_bit\n",
+		PREFIX_STRING));
+
 	if (device == NULL)
 		return -EINVAL;
 
 	ntb_lib_write_32(device->mm_regs,
 	NTB_WCCNTRL_OFFSET, NTB_WCCNTRL_WRITE);
+
+	NTB_DEBUG_PRINT(("%s Exiting ntb_write_wccntrl_bit\n",
+		PREFIX_STRING));
 
 	return SUCCESS;
 }
@@ -1218,15 +1358,17 @@ uint32_t ntb_read_wccntrl_bit(ntb_client_handle_t handle)
 	struct ntb_device *device = NULL;
 
 	device = ntb_get_device_by_handle(handle);
-
+	NTB_DEBUG_PRINT(("%s Entering ntb_read_wccntrl_bit\n",
+			PREFIX_STRING));
 	if (device == NULL)
 		return -EINVAL;
 
 	value = ntb_lib_read_32(device->mm_regs,
 	NTB_WCCNTRL_OFFSET);
 
-	NTB_DEBUG_PRINT(("NTB: READ WCCNTRL value %x\n",
+	NTB_DEBUG_PRINT(("%s READ WCCNTRL value %x\n",	PREFIX_STRING,
 			value));
+	NTB_DEBUG_PRINT(("%s Exiting ntb_read_wccntrl_bit\n", PREFIX_STRING));
 
 	return value;
 }
@@ -1253,16 +1395,20 @@ uint64_t address)
 	if (device == NULL)
 		return -EINVAL;
 
-	NTB_DEBUG_PRINT(("NTB: INSIDE NTB_WRITE_REMOTE_TRANSLATE dev %p \n",
-	device));
+	NTB_DEBUG_PRINT(("%s Entering ntb_write_remote_translate\n",
+	PREFIX_STRING));
 
 	if (bar == NTB_BAR_23) {
 		ntb_lib_write_64(device->mm_regs,
 		NTB_PBAR_23_TRANSLATE_OFFSET, address);
+		NTB_DEBUG_PRINT(("%s Exiting ntb_write_remote_translate\n",
+			PREFIX_STRING));
 		return SUCCESS;
 	} else if (bar == NTB_BAR_45) {
 		ntb_lib_write_64(device->mm_regs,
 		NTB_PBAR_45_TRANSLATE_OFFSET, address);
+		NTB_DEBUG_PRINT(("%s Exiting ntb_write_remote_translate\n",
+			PREFIX_STRING));
 		return SUCCESS;
 	}
 
@@ -1288,20 +1434,26 @@ enum ntb_bar_t bar)
 
 	device = ntb_get_device_by_handle(handle);
 
+	NTB_DEBUG_PRINT(("%s Entering ntb_read_remote_translate\n",
+		PREFIX_STRING));
+
 	if (device == NULL)
 		return -EINVAL;
 
-	NTB_DEBUG_PRINT(("NTB: INSIDE NTB_READ_REMOTE_TRANSLATE dev %p \n",
-			device));
+
 
 	if (bar == NTB_BAR_23) {
 		translate = ntb_lib_read_64(device->mm_regs,
 		NTB_PBAR_23_TRANSLATE_OFFSET);
+		NTB_DEBUG_PRINT(("%s Exiting ntb_read_remote_translate\n",
+				PREFIX_STRING));
 		return translate;
 
 	} else if (bar == NTB_BAR_45) {
 		translate = ntb_lib_read_64(device->mm_regs,
 		NTB_PBAR_45_TRANSLATE_OFFSET);
+		NTB_DEBUG_PRINT(("%s Exiting ntb_read_remote_translate\n",
+				PREFIX_STRING));
 		return translate;
 
 	}
@@ -1319,11 +1471,14 @@ enum ntb_bar_t bar)
  * -EINVAL wrong parameter supplied
 *****************************************************************************/
 int32_t ntb_write_remote_doorbell_mask(ntb_client_handle_t handle,
-uint32_t mask)
+uint16_t mask)
 {
 	struct ntb_device *device = NULL;
 
 	device = ntb_get_device_by_handle(handle);
+
+	NTB_DEBUG_PRINT(("%s Entering ntb_write_remote_doorbell_mask\n",
+	PREFIX_STRING));
 
 	if (device == NULL)
 		return -EINVAL;
@@ -1331,9 +1486,10 @@ uint32_t mask)
 	ntb_lib_write_16(device->mm_regs,
 	DOORBELL_SECONDARY_MASK_OFFSET, mask);
 
-	NTB_DEBUG_PRINT(("NTB: WRITE SECONDARY MASK mask %x\n",
-				mask));
-
+	NTB_DEBUG_PRINT(("%s mask %x\n", PREFIX_STRING,
+	mask));
+	NTB_DEBUG_PRINT(("%s Exiting ntb_write_remote_doorbell_mask\n",
+			PREFIX_STRING));
 	return SUCCESS;
 }
 
@@ -1346,12 +1502,15 @@ uint32_t mask)
  * Return Values: 0 successful,
  * -EINVAL wrong parameter supplied
 *****************************************************************************/
-uint16_t ntb_read_remote_doorbell_mask(ntb_client_handle_t handle)
+int32_t ntb_read_remote_doorbell_mask(ntb_client_handle_t handle)
 {
 	struct ntb_device *device = NULL;
-	uint16_t mask = 0;
+	int32_t mask = 0;
 
 	device = ntb_get_device_by_handle(handle);
+
+	NTB_DEBUG_PRINT(("%s Entering ntb_read_remote_doorbell_mask\n",
+		PREFIX_STRING));
 
 	if (device == NULL)
 		return -EINVAL;
@@ -1359,8 +1518,11 @@ uint16_t ntb_read_remote_doorbell_mask(ntb_client_handle_t handle)
 	mask = ntb_lib_read_16(device->mm_regs,
 	DOORBELL_SECONDARY_MASK_OFFSET);
 
-	NTB_DEBUG_PRINT(("NTB: READ SECONDARY MASK mask %x\n",
+	NTB_DEBUG_PRINT(("%s mask %x\n", PREFIX_STRING,
 	mask));
+
+	NTB_DEBUG_PRINT(("%s Exiting ntb_read_remote_doorbell_mask\n",
+			PREFIX_STRING));
 
 	return mask;
 }
@@ -1384,30 +1546,40 @@ uint64_t value)
 
 	device = ntb_get_device_by_handle(handle);
 
+	NTB_DEBUG_PRINT(("%s Entering ntb_write_remote_limit\n",
+			PREFIX_STRING));
+
 	if (device == NULL)
 		return -EINVAL;
 
-	NTB_DEBUG_PRINT(("NTB: INSIDE NTB_WRITE_SECONDARY_LIMIT dev %p \n",
-	device));
 
 	if (handle & NTB_BAR_23)
 		limit_setting = device->secondary_limit_max_23;
 	else if (handle & NTB_BAR_45)
 		limit_setting = device->secondary_limit_max_45;
 
+	NTB_DEBUG_PRINT(("%s limt_setting =  %Lx \n", PREFIX_STRING,
+	limit_setting));
+	NTB_DEBUG_PRINT(("%s value = %Lx \n", PREFIX_STRING,
+	value));
+
 	if (limit_setting <= 0)
 		return -EPERM;
 
 	if (value == 0 || value > limit_setting) {
-		NTB_DEBUG_PRINT(("NTB: Limit out of bounds\n"));
-		NTB_DEBUG_PRINT(("NTB: Value %Lx Limit Settings %Lx \n",
+		NTB_DEBUG_PRINT(("%s LIMIT OUT OF BOUNDS\n",
+		PREFIX_STRING));
+		NTB_DEBUG_PRINT(("%s Value %Lx Limit Settings %Lx \n",
+		PREFIX_STRING,
 		value, limit_setting));
 		return -EINVAL;
 	}
 
 	if ((value & ALIGNMENT_CHECK) != 0) {
-		NTB_DEBUG_PRINT(("NTB: Limit unaligned\n"));
-		NTB_DEBUG_PRINT(("NTB: Value %Lx Limit Settings %Lx \n",
+		NTB_DEBUG_PRINT(("%s ALIGNMENT CHECK\n",
+		PREFIX_STRING));
+		NTB_DEBUG_PRINT(("%s Value %Lx Limit Settings %Lx \n",
+		PREFIX_STRING,
 		value, limit_setting));
 		return -EINVAL;
 	}
@@ -1416,12 +1588,18 @@ uint64_t value)
 		ntb_lib_write_64(device->mm_regs,
 		NTB_SBAR_23_LIMIT_OFFSET, value
 		+ device->secondary_limit_base_23);
+		NTB_DEBUG_PRINT(("%s Exiting ntb_write_remote_limit\n",
+		PREFIX_STRING));
 		return SUCCESS;
 	} else if (bar == NTB_BAR_45) {
 		ntb_lib_write_64(device->mm_regs,
 		NTB_SBAR_45_LIMIT_OFFSET, value
 		+ device->secondary_limit_base_45);
+		NTB_DEBUG_PRINT(("%s Exiting ntb_write_remote_limit\n",
+		PREFIX_STRING));
 		return SUCCESS;
+	} else {
+		return -EINVAL;
 	}
 
 	return -EPERM;
@@ -1441,28 +1619,37 @@ uint64_t value)
 int64_t ntb_read_remote_limit(ntb_client_handle_t handle,
 enum ntb_bar_t bar)
 {
-	int64_t limit = 0;
+	uint64_t limit = 0;
 	struct ntb_device *device = NULL;
 	int64_t ret = -EINVAL;
 
 	device = ntb_get_device_by_handle(handle);
 
+	NTB_DEBUG_PRINT(("%s Entering ntb_read_remote_limit\n",
+	PREFIX_STRING));
+
 	if (device == NULL)
 		return -EINVAL;
 
-	NTB_DEBUG_PRINT(("NTB: INSIDE NTB_READ_SECONDARY_LIMIT dev %p \n",
-			device));
 
 	if (bar == NTB_BAR_23) {
 		limit = ntb_lib_read_64(device->mm_regs,
 		NTB_SBAR_23_LIMIT_OFFSET);
 		limit -= device->secondary_limit_base_23;
+		NTB_DEBUG_PRINT(("%s Limit = %Lx\n",
+		PREFIX_STRING, limit));
+		NTB_DEBUG_PRINT(("%s Exiting ntb_read_remote_limit\n",
+		PREFIX_STRING));
 		return limit;
 
 	} else if (bar == NTB_BAR_45) {
 		limit = ntb_lib_read_64(device->mm_regs,
 		NTB_SBAR_45_LIMIT_OFFSET);
 		limit -= device->secondary_limit_base_45;
+		NTB_DEBUG_PRINT(("%s Limit = %Lx\n",
+		PREFIX_STRING, limit));
+		NTB_DEBUG_PRINT(("%s Exiting read_remote_limit\n",
+		PREFIX_STRING));
 		return limit;
 	}
 

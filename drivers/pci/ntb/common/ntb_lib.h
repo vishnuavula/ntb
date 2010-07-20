@@ -4,7 +4,7 @@
  * 
  *   GPL LICENSE SUMMARY
  * 
- *   Copyright(c) 2007,2008,2009 Intel Corporation. All rights reserved.
+ *   Copyright(c) 2007,2008,2009,2010 Intel Corporation. All rights reserved.
  * 
  *   This program is free software; you can redistribute it and/or modify 
  *   it under the terms of version 2 of the GNU General Public License as
@@ -26,7 +26,7 @@
  * 
  *   BSD LICENSE 
  * 
- *   Copyright(c) 2007,2008,2009 Intel Corporation. All rights reserved.
+ *   Copyright(c) 2007,2008,2009, 2010 Intel Corporation. All rights reserved.
  *   All rights reserved.
  * 
  *   Redistribution and use in source and binary forms, with or without 
@@ -56,7 +56,7 @@
  *   OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  * 
  * 
- *  version: Embedded.Release.L.0.5.1-2
+ *  version: Embedded.Release.L.1.0.0-401
  ****************************************************************************/
 /*****************************************************************************
  * FILE CONTENTS: Data and types private to the driver. These APIs will not
@@ -94,7 +94,7 @@
 #include <linux/sysfs.h>
 #include <linux/miscdevice.h>
 #include <linux/platform_device.h>
-#include <linux/crypto.h>
+/*#include <linux/crypto.h> */
 #include <linux/spinlock_types.h>
 
 #define MAX_BARS_USED      2
@@ -105,8 +105,8 @@
 
 /* Snoop Mask that are private to the NTB Driver not exposed via the Client
 Driver interface */
-#define NTB_23_SNOOP_MASK	0x0000003C
-#define NTB_45_SNOOP_MASK	0x000003C0
+#define NTB_23_SNOOP_MASK   0x0000003C
+#define NTB_45_SNOOP_MASK   0x000003C0
 
 /*SERIOUS: This must be changed after a silicon REV because
 there is a silicon bug that requires us to write all F's here for now.
@@ -158,8 +158,11 @@ there is a silicon bug that requires us to write all F's here for now.
 
 /* PCI Configuration Registers */
 
-#define NTB_LINK_CONTROL_OFFSET                   0x1A0
-#define NTB_LINK_STATUS_OFFSET                    0x1A2
+#define NTB_LINK_CONTROL_OFFSET_PRI               0x1A0
+#define NTB_LINK_STATUS_OFFSET_PRI                0x1A2
+#define NTB_LINK_CONTROL_OFFSET_SEC               0xA0
+#define NTB_LINK_STATUS_OFFSET_SEC                0xA2
+
 
 #define PRIMARY_CONFIG                            0x01
 #define SECONDARY_CONFIG                          0x02
@@ -168,92 +171,95 @@ there is a silicon bug that requires us to write all F's here for now.
 #define NTB_SCRATCHPAD_REGS_DEFINED
 
 #define NTB_TOTAL_SCRATCHPAD_NO 16
-
+#define NTB_LIMIT_NO            8
+#define NTB_INTERRUPTS_ENABLED  1
+#define NTB_DB                  1
+#define NTB_SEC_MSIX_MAP        0x4000
 /* struct to hold scratchpad registers */
 struct scratchpad_registers {
-	uint32_t registers[NTB_TOTAL_SCRATCHPAD_NO];
+    uint32_t registers[NTB_TOTAL_SCRATCHPAD_NO];
 };
 
 #endif /* NTB_SCRATCHPAD_REGS_DEFINED */
 
 /* struct to hold B2B shadowed registers */
 struct shadowed_area {
-	struct scratchpad_registers b2b_scratchpad;
-	uint32_t b2b_doorbell;
-	uint64_t b2b_translate;
+    struct scratchpad_registers b2b_scratchpad;
+    uint32_t b2b_doorbell;
+    uint64_t b2b_translate;
 };
 
 /* memory mapped registers  */
 
 struct ntb_mm_regs {
-	uint64_t ntb_primary_bar_23_limit;
-	uint64_t ntb_primary_bar_45_limit;
-	uint64_t ntb_primary_bar_23_translate;
-	uint64_t ntb_primary_bar_45_translate;
-	uint64_t ntb_secondary_bar_23_limit;
-	uint64_t ntb_secondary_bar_45_limit;
-	uint64_t ntb_secondary_bar_23_translate;
-	uint64_t ntb_secondary_bar_45_translate;
-	uint64_t ntb_secondary_base_0;
-	uint64_t ntb_secondary_base_2;
-	uint64_t ntb_secondary_base_4;
+    uint64_t ntb_primary_bar_23_limit;
+    uint64_t ntb_primary_bar_45_limit;
+    uint64_t ntb_primary_bar_23_translate;
+    uint64_t ntb_primary_bar_45_translate;
+    uint64_t ntb_secondary_bar_23_limit;
+    uint64_t ntb_secondary_bar_45_limit;
+    uint64_t ntb_secondary_bar_23_translate;
+    uint64_t ntb_secondary_bar_45_translate;
+    uint64_t ntb_secondary_base_0;
+    uint64_t ntb_secondary_base_2;
+    uint64_t ntb_secondary_base_4;
 
-	uint32_t ntb_cntl;
-	int16_t ntb_sbdf;
-	int16_t ntb_reserved_sbdf;
-	uint16_t ntb_pdoorbell;
-	uint16_t ntb_pdbmask;
-	uint16_t ntb_sdoorbell;
-	uint16_t ntb_sdbmask;
-	uint16_t reserved_region_one;
-	uint16_t ntb_usememmiss;
-	uint32_t reserved_region_two[4];
-	struct scratchpad_registers scratchpad;
-	uint32_t ntb_scratchpad_semaphore;
+    uint32_t ntb_cntl;
+    int16_t ntb_sbdf;
+    int16_t ntb_reserved_sbdf;
+    uint16_t ntb_pdoorbell;
+    uint16_t ntb_pdbmask;
+    uint16_t ntb_sdoorbell;
+    uint16_t ntb_sdbmask;
+    uint16_t reserved_region_one;
+    uint16_t ntb_usememmiss;
+    uint32_t reserved_region_two[4];
+    struct scratchpad_registers scratchpad;
+    uint32_t ntb_scratchpad_semaphore;
 
-	/* Shadowed area separated by large reserve region */
-	uint32_t reserved_region_three[15];
+    /* Shadowed area separated by large reserve region */
+    uint32_t reserved_region_three[15];
 
-	struct shadowed_area shadow;
+    struct shadowed_area shadow;
 };
 
 /* register offsets */
 enum ntb_mmio_offsets {
-	NTB_PBAR_23_LIMIT_OFFSET     = 0x00,
-	NTB_PBAR_45_LIMIT_OFFSET     = 0x08,
-	NTB_PBAR_23_TRANSLATE_OFFSET = 0x10,
-	NTB_PBAR_45_TRANSLATE_OFFSET = 0x18,
+    NTB_PBAR_23_LIMIT_OFFSET     = 0x00,
+    NTB_PBAR_45_LIMIT_OFFSET     = 0x08,
+    NTB_PBAR_23_TRANSLATE_OFFSET = 0x10,
+    NTB_PBAR_45_TRANSLATE_OFFSET = 0x18,
 
-	NTB_SBAR_23_LIMIT_OFFSET     = 0x20,
-	NTB_SBAR_45_LIMIT_OFFSET     = 0x28,
-	NTB_SBAR_23_TRANSLATE_OFFSET = 0x30,
-	NTB_SBAR_45_TRANSLATE_OFFSET = 0x38,
+    NTB_SBAR_23_LIMIT_OFFSET     = 0x20,
+    NTB_SBAR_45_LIMIT_OFFSET     = 0x28,
+    NTB_SBAR_23_TRANSLATE_OFFSET = 0x30,
+    NTB_SBAR_45_TRANSLATE_OFFSET = 0x38,
 
-	NTB_SECONDARY_BASE_0_OFFSET  = 0x40,
-	NTB_SECONDARY_BASE_2_OFFSET  = 0x48,
-	NTB_SECONDARY_BASE_4_OFFSET  = 0x50,
+    NTB_SECONDARY_BASE_0_OFFSET  = 0x40,
+    NTB_SECONDARY_BASE_2_OFFSET  = 0x48,
+    NTB_SECONDARY_BASE_4_OFFSET  = 0x50,
 
-	NTB_CNTL_OFFSET              = 0x58,
-	NTB_SBDF_OFFSET              = 0x5C,
+    NTB_CNTL_OFFSET              = 0x58,
+    NTB_SBDF_OFFSET              = 0x5C,
 
-	NTB_PDOORBELL_OFFSET         = 0x60,
-	NTB_SDOORBELL_OFFSET         = 0x64,
+    NTB_PDOORBELL_OFFSET         = 0x60,
+    NTB_SDOORBELL_OFFSET         = 0x64,
 
-	NTB_SCRATCHPAD_OFFSET        = 0x80,
-	NTB_SCRATCHPAD_SEM4_OFFSET   = 0xC0,
+    NTB_SCRATCHPAD_OFFSET        = 0x80,
+    NTB_SCRATCHPAD_SEM4_OFFSET   = 0xC0,
 
-	NTB_B2B_SCRATCHPAD_OFFSET    = 0x100,
-	NTB_B2B_DOORBELL_OFFSET      = 0x140,
-	NTB_B2B_TRANSLATE_OFFSET     = 0x144
+    NTB_B2B_SCRATCHPAD_OFFSET    = 0x100,
+    NTB_B2B_DOORBELL_OFFSET      = 0x140,
+    NTB_B2B_TRANSLATE_OFFSET     = 0x144
 };
 
 /* default register values */
 enum ntb_doorbell_default_values {
-	NTB_HEARTBEAT_23         = 0x01,
-	NTB_HEARTBEAT_45         = 0x02,
-	NTB_EVENT_NOTIFICATION   = 0x400,
-	NTB_EVENT_ACKNOWLEDGMENT = 0x800,
-	NTB_LINK_STATUS_CHANGE   = 0x8000,
+    NTB_HEARTBEAT_23         = 0x01,
+    NTB_HEARTBEAT_45         = 0x02,
+    NTB_EVENT_NOTIFICATION   = 0x400,
+    NTB_EVENT_ACKNOWLEDGMENT = 0x800,
+    NTB_LINK_STATUS_CHANGE   = 0x8000,
 };
 
 /* Writes */
