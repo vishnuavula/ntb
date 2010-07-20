@@ -105,7 +105,7 @@ int ntbdev_init(struct ntbeth_ntbdev *pdev, int bar23_size, int bar45_size, int 
 	pdev->rx_int_doorbell_num = rx_int_doorbell_num;
 	spin_lock_init(&pdev->db_lock);
 	gntbdev = pdev; // remember pointer to ntbdev here because in NTB callbacks we do not have a facility to get the context back. Thus we use global variable
-	ntb_get_api(&pdev->funcs);
+	ntb_get_b2b_api(&pdev->funcs);
 	if(pdev->funcs.ntb_get_number_devices() < 1) {
 		printk("ERROR: NO NTB-NTB DEVICES found\n");
 		return (NTBETH_FAIL);
@@ -186,7 +186,7 @@ int ntbdev_get_bus_address(struct device *pdev, void *virt_addr, int size, dma_a
 
 int ntbdev_cleanup(struct ntbeth_ntbdev *pdev)
 {
-	ntb_get_api(&pdev->funcs);
+	ntb_get_b2b_api(&pdev->funcs);
 	pdev->funcs.ntb_unregister_client(pdev->barinfo[NTBETH_BAR23INFO_INDEX].handle);
 	pdev->funcs.ntb_unregister_client(pdev->barinfo[NTBETH_BAR45INFO_INDEX].handle);
 	if(ntbdev_free_dma_memory(NULL,pdev->barinfo[NTBETH_BAR23INFO_INDEX].bar_size, pdev->barinfo[NTBETH_BAR23INFO_INDEX].local_memory_virt_addr, pdev->barinfo[NTBETH_BAR23INFO_INDEX].local_memory_dma_addr)) {
@@ -364,3 +364,5 @@ int ntbdev_get_bus_address_for_remote_buffers(struct ntbeth_ntbdev *pdev, void *
 	NTBETHDEBUG(" Bus Address for remote buffers 0x%Lx\n", (unsigned long long)*bus_address);
 	return (NTBETH_SUCCESS);
 }
+
+MODULE_LICENSE("Dual BSD/GPL");
