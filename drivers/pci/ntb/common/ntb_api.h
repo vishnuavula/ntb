@@ -4,7 +4,7 @@
 * 
 *   GPL LICENSE SUMMARY
 * 
-*   Copyright(c) 2007,2008,2009 Intel Corporation. All rights reserved.
+*   Copyright(c) 2007,2008,2009,2010 Intel Corporation. All rights reserved.
 * 
 *   This program is free software; you can redistribute it and/or modify 
 *   it under the terms of version 2 of the GNU General Public License as
@@ -26,7 +26,7 @@
 * 
 *   BSD LICENSE 
 * 
-*   Copyright(c) 2007,2008,2009 Intel Corporation. All rights reserved.
+*   Copyright(c) 2007,2008,2009, 2010 Intel Corporation. All rights reserved.
 *   All rights reserved.
 * 
 *   Redistribution and use in source and binary forms, with or without 
@@ -56,7 +56,7 @@
 *   OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 * 
 * 
-*  version: Embedded.Release.L.0.5.1-2
+*  version: Embedded.Release.L.1.0.0-401
 ******************************************************************************/
 
 /* This file defines the API exposed by the NTB Driver */
@@ -107,9 +107,10 @@
 
 #define NTB_TOTAL_SCRATCHPAD_NO 16
 
+
 /* struct to hold scratch pad registers */
 struct scratchpad_registers {
-	uint32_t registers[NTB_TOTAL_SCRATCHPAD_NO];
+    uint32_t registers[NTB_TOTAL_SCRATCHPAD_NO];
 };
 
 #endif /* NTB_SCRATCHPAD_REGS_DEFINED */
@@ -121,8 +122,8 @@ struct scratchpad_registers {
 
 /* Set Link Up NTBCNTL */
 enum link_t {
-	SET_LINK_DOWN = 0x02,
-	SET_LINK_UP   = LINK_ENABLE
+    SET_LINK_DOWN = 0x02,
+    SET_LINK_UP   = LINK_ENABLE
 
 };
 /* Status */
@@ -140,9 +141,9 @@ enum link_t {
  * passed into  functions to indicate which BAR is being requested.
  */
 enum ntb_bar_t {
-	NTB_BAR_01    = 0x00000000,
-	NTB_BAR_23    = 0x00010000,
-	NTB_BAR_45    = 0x00020000
+    NTB_BAR_01    = 0x00000000,
+    NTB_BAR_23    = 0x00010000,
+    NTB_BAR_45    = 0x00020000
 };
 
 
@@ -164,7 +165,7 @@ struct scratchpad_registers pad
 
 
 struct ntb_semaphore {
-	ntb_client_handle_t handle; /* who has the semaphore */
+    ntb_client_handle_t handle; /* who has the semaphore */
 };
 
 /**
@@ -175,8 +176,8 @@ struct ntb_semaphore {
  *
  */
 struct ntb_client_data {
-	uint64_t limit;
-	uint64_t translate_address;
+    uint64_t limit;
+    uint64_t translate_address;
 };
 
 
@@ -189,10 +190,10 @@ struct ntb_client_data {
 
 
 struct ntb_client {
-	ntb_client_handle_t handle;
-	ntb_callback_t callback;
-	struct ntb_client_data client_data;
-	uint16_t bdf;
+    ntb_client_handle_t handle;
+    ntb_callback_t callback;
+    struct ntb_client_data client_data;
+    uint16_t bdf;
 };
 
 
@@ -404,7 +405,7 @@ int32_t ntb_reset_policy(ntb_client_handle_t handle);
  * of the doorbell. Each client can add policy by using the
  * the function parameters to indicate specific bits.
  */
-uint16_t ntb_get_policy(ntb_client_handle_t handle);
+int16_t ntb_get_policy(ntb_client_handle_t handle);
 
 /**
  * ntb_get_next_bdf - returns next available BDF/BAR combination.
@@ -477,14 +478,14 @@ enum ntb_bar_t bar);
  *
  */
 int32_t ntb_write_remote_doorbell_mask(ntb_client_handle_t handle,
-uint32_t mask);
+uint16_t mask);
 
 /**
  * ntb_read_remote_doorbell_mask - returns secondary side's mask values.
  * @handle: handle granted by ntb_client_register
  *
  */
-uint16_t ntb_read_remote_doorbell_mask(ntb_client_handle_t handle);
+int32_t ntb_read_remote_doorbell_mask(ntb_client_handle_t handle);
 
 /**
  * ntb_write_remote_limit - sets secondary limit register.
@@ -512,7 +513,7 @@ enum ntb_bar_t bar);
  *
  * Used from the primary side.
  */
-uint64_t ntb_read_remote_bar(ntb_client_handle_t handle, enum ntb_bar_t bar);
+int64_t ntb_read_remote_bar(ntb_client_handle_t handle, enum ntb_bar_t bar);
 
 /**
  * ntb_write_remote_bar- writes base address register.
@@ -525,6 +526,17 @@ uint64_t ntb_read_remote_bar(ntb_client_handle_t handle, enum ntb_bar_t bar);
 int32_t ntb_write_remote_bar(ntb_client_handle_t handle, enum ntb_bar_t bar,
 uint64_t address);
 
+#ifdef B0_SI_SOLN_CL
+/**
+ * ntb_read_remote_msix - reads remote MSIX config data.
+ * @pad: ptr to a pad struct to hold MSIX config data
+ * @handle: handle granted by ntb_client_register
+ *
+ * Used from the primary side
+ */
+int32_t ntb_read_remote_msix(struct scratchpad_registers *pad,
+ntb_client_handle_t handle);
+#endif
 
 /*****************************************************************************
  *@ingroup NTB_CLIENT_API
@@ -533,86 +545,112 @@ uint64_t address);
  *****************************************************************************/
 struct ntb_api_export {
 
-	ntb_client_handle_t (*ntb_register_client)(enum ntb_bar_t bar,
-	ntb_callback_t callback,
-	uint16_t bdf,
-	struct ntb_client_data *client_data);
+    ntb_client_handle_t (*ntb_register_client)(enum ntb_bar_t bar,
+    ntb_callback_t callback,
+    uint16_t bdf,
+    struct ntb_client_data *client_data);
 
-	int32_t (*ntb_unregister_client)(ntb_client_handle_t handle);
+    int32_t (*ntb_unregister_client)(ntb_client_handle_t handle);
 
-	int32_t (*ntb_write_limit)(ntb_client_handle_t handle,
-	uint64_t value);
+    int32_t (*ntb_write_limit)(ntb_client_handle_t handle,
+    uint64_t value);
 
-	uint64_t (*ntb_read_limit)(ntb_client_handle_t handle);
+    uint64_t (*ntb_read_limit)(ntb_client_handle_t handle);
 
-	int32_t (*ntb_write_scratch_pad_many)(uint32_t how_many,
-	struct scratchpad_registers *values,
-	ntb_client_handle_t handle);
+    int32_t (*ntb_write_scratch_pad_many)(uint32_t how_many,
+    struct scratchpad_registers *values,
+    ntb_client_handle_t handle);
 
-	int32_t (*ntb_write_scratch_pad_one)(uint32_t index, uint32_t value,
-	ntb_client_handle_t handle);
+    int32_t (*ntb_write_scratch_pad_one)(uint32_t index, uint32_t value,
+    ntb_client_handle_t handle);
 
-	int32_t (*ntb_read_scratch_pad_many)(uint32_t how_many,
-	struct scratchpad_registers *pad,
-	ntb_client_handle_t handle);
+    int32_t (*ntb_read_scratch_pad_many)(uint32_t how_many,
+    struct scratchpad_registers *pad,
+    ntb_client_handle_t handle);
 
-	int32_t (*ntb_read_scratch_pad_one)(uint32_t index, uint32_t *value,
-	ntb_client_handle_t handle);
+    int32_t (*ntb_read_scratch_pad_one)(uint32_t index, uint32_t *value,
+    ntb_client_handle_t handle);
 
-	int32_t (*ntb_write_translate)(
-	ntb_client_handle_t handle,
-	uint64_t address);
+    int32_t (*ntb_write_translate)(
+    ntb_client_handle_t handle,
+    uint64_t address);
 
-	int32_t(*ntb_write_doorbell)(ntb_client_handle_t handle,
-	uint16_t value);
+    int32_t(*ntb_write_doorbell)(ntb_client_handle_t handle,
+    uint16_t value);
 
-	int32_t (*ntb_obtain_semaphore)(ntb_client_handle_t handle);
+    int32_t (*ntb_obtain_semaphore)(ntb_client_handle_t handle);
 
-	int32_t(*ntb_release_semaphore)(ntb_client_handle_t handle);
+    int32_t(*ntb_release_semaphore)(ntb_client_handle_t handle);
 
-	int32_t (*ntb_set_snoop_level)(ntb_client_handle_t handle,
-	uint32_t value);
+    int32_t (*ntb_set_snoop_level)(ntb_client_handle_t handle,
+    uint32_t value);
 
-	uint32_t (*ntb_get_number_devices)(void);
+    uint32_t (*ntb_get_number_devices)(void);
 
-	int16_t (*ntb_get_link_status)(int32_t handle);
+    int16_t (*ntb_get_link_status)(int32_t handle);
 
-	int32_t (*ntb_set_link_status)(int32_t handle, enum link_t status);
+    int32_t (*ntb_set_link_status)(int32_t handle, enum link_t status);
 
-	uint64_t (*ntb_get_bar_address)(ntb_client_handle_t handle,
-	enum ntb_bar_t bar);
+    uint64_t (*ntb_get_bar_address)(ntb_client_handle_t handle,
+    enum ntb_bar_t bar);
 
-	int32_t (*ntb_client_suspend)(ntb_client_handle_t handle);
+    int32_t (*ntb_client_suspend)(ntb_client_handle_t handle);
 
-	int32_t (*ntb_add_policy)(ntb_client_handle_t handle,
-	uint16_t heartbeat_bit, uint16_t bar_bits,
-	uint16_t power_event_bit,
-	uint16_t power_notification_bit);
+    int32_t (*ntb_add_policy)(ntb_client_handle_t handle,
+    uint16_t heartbeat_bit, uint16_t bar_bits,
+    uint16_t power_event_bit,
+    uint16_t power_notification_bit);
 
-	int32_t (*ntb_reset_policy)(ntb_client_handle_t handle);
+    int32_t (*ntb_reset_policy)(ntb_client_handle_t handle);
 
-	uint16_t (*ntb_get_policy)(ntb_client_handle_t handle);
+    int16_t (*ntb_get_policy)(ntb_client_handle_t handle);
 
-	int32_t (*ntb_get_next_bdf)(uint16_t *next_bdf,
-	uint32_t *next_bar);
+    int32_t (*ntb_get_next_bdf)(uint16_t *next_bdf,
+    uint32_t *next_bar);
 
-	int32_t (*ntb_get_number_unused_bdfs)(void);
+    int32_t (*ntb_get_number_unused_bdfs)(void);
 
-	int32_t (*ntb_write_wccntrl_bit)(ntb_client_handle_t handle);
+    int32_t (*ntb_write_wccntrl_bit)(ntb_client_handle_t handle);
 
-	uint32_t (*ntb_read_wccntrl_bit)(ntb_client_handle_t handle);
+    uint32_t (*ntb_read_wccntrl_bit)(ntb_client_handle_t handle);
 
-	int32_t (*ntb_write_remote_translate)(
-	ntb_client_handle_t handle,
-	enum ntb_bar_t bar,
-	uint64_t address);
+    int32_t (*ntb_write_remote_translate)(
+    ntb_client_handle_t handle,
+    enum ntb_bar_t bar,
+    uint64_t address);
 
-	int64_t (*ntb_read_remote_translate)(ntb_client_handle_t handle,
-	enum ntb_bar_t bar);
+    int64_t (*ntb_read_remote_translate)(ntb_client_handle_t handle,
+    enum ntb_bar_t bar);
 
+    int32_t (*ntb_write_remote_doorbell_mask)(ntb_client_handle_t handle,
+    uint16_t mask);
+
+    int32_t (*ntb_read_remote_doorbell_mask)(ntb_client_handle_t handle);
+
+    int32_t (*ntb_write_remote_limit)(ntb_client_handle_t handle,
+    enum ntb_bar_t bar,
+    uint64_t value);
+
+    int64_t (*ntb_read_remote_limit)(ntb_client_handle_t handle,
+    enum ntb_bar_t bar);
+
+    int32_t (*ntb_write_remote_bar)(ntb_client_handle_t handle,
+    enum ntb_bar_t bar,
+    uint64_t address);
+
+    int64_t (*ntb_read_remote_bar)(ntb_client_handle_t handle,
+    enum ntb_bar_t bar);
+
+#ifdef B0_SI_SOLN_CL
+    int32_t (*ntb_read_remote_msix)(struct scratchpad_registers *pad,
+    ntb_client_handle_t handle);
+#endif
 };
 
-int32_t ntb_get_api(struct ntb_api_export *api);
+int32_t ntb_get_b2b_api(struct ntb_api_export *api);
+int32_t ntb_get_rootport_api(struct ntb_api_export *api);
+int32_t ntb_get_classic_api(struct ntb_api_export *api);
+
 
 
 typedef int32_t (*ntb_get_api_t)(struct ntb_api_export *);
