@@ -1,0 +1,24 @@
+config NTB
+	tristate
+
+config NTB_B2B
+	tristate
+	select NTB
+
+config NTB_ETH
+	tristate "ntbeth: NTB to Ethernet emulation"
+	depends on PCI && X86
+	select NTB_B2B
+	help
+	  ntbeth is a Linux network driver that uses NTB PCI-E Link as
+	  point-to-point link between two electrically separated
+	  systems. The driver registers itself as Ethernet driver into
+	  the Linux TCP/IP stack.  Primary purpose of this driver is to
+	  show how NTB link can be used as connection link between two
+	  systems to exchange data using NTB provided Windows into
+	  remote system and use door bells to provide asynchronous
+	  notifications to remote system
+
+	  If you are building the kernel for a Jasper Forest system say Y
+
+	  If unsure, say N
