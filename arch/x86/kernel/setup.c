@@ -420,6 +420,22 @@ static void __init reserve_initrd(void)
 }
 #endif /* CONFIG_BLK_DEV_INITRD */
 
+static void __init reserve_adr(void)
+{
+	#ifdef CONFIG_ADR
+	int i;
+
+	for (i = 0; i < e820.nr_map; i++) {
+		struct e820entry *ei = &e820.map[i];
+
+		if (ei->type != E820_PROTECTED_KERN)
+			continue;
+
+		reserve_early(ei->addr, ei->addr + ei->size, "ADR");
+	}
+	#endif
+}
+
 static void __init parse_setup_data(void)
 {
 	struct setup_data *data;
@@ -991,6 +1007,8 @@ void __init setup_arch(char **cmdline_p)
 	if (!acpi)
 		k8 = !k8_numa_init(0, max_pfn);
 #endif
+	
+	reserve_adr();
 
 	initmem_init(0, max_pfn, acpi, k8);
 #ifndef CONFIG_NO_BOOTMEM

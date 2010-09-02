@@ -316,8 +316,20 @@ struct mddev_s
 	struct bio *barrier;
 	atomic_t flush_pending;
 	struct work_struct barrier_work;
+	make_request_fn			*bbu_make_request; /* write-back cache make_request_fn,
+							    * established by the personality
+							    */
+	void				*mddev_data; /* data for intervening caching agent, and an
+						      * anchor to recover mddev
+						      */
 };
 
+static inline void *md_queuedata(struct request_queue *q)
+{
+	void **d = q->queuedata;
+
+	return container_of(d, mddev_t, mddev_data);
+}
 
 static inline void rdev_dec_pending(mdk_rdev_t *rdev, mddev_t *mddev)
 {
@@ -411,32 +423,6 @@ typedef struct mdk_thread_s {
 } mdk_thread_t;
 
 #define THREAD_WAKEUP  0
-
-#define __wait_event_lock_irq(wq, condition, lock, cmd) 		\
-do {									\
-	wait_queue_t __wait;						\
-	init_waitqueue_entry(&__wait, current);				\
-									\
-	add_wait_queue(&wq, &__wait);					\
-	for (;;) {							\
-		set_current_state(TASK_UNINTERRUPTIBLE);		\
-		if (condition)						\
-			break;						\
-		spin_unlock_irq(&lock);					\
-		cmd;							\
-		schedule();						\
-		spin_lock_irq(&lock);					\
-	}								\
-	current->state = TASK_RUNNING;					\
-	remove_wait_queue(&wq, &__wait);				\
-} while (0)
-
-#define wait_event_lock_irq(wq, condition, lock, cmd) 			\
-do {									\
-	if (condition)	 						\
-		break;							\
-	__wait_event_lock_irq(wq, condition, lock, cmd);		\
-} while (0)
 
 static inline void safe_put_page(struct page *p)
 {

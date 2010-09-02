@@ -20,6 +20,7 @@
 #include <linux/dmaengine.h>
 #include <linux/spinlock.h>
 #include <linux/interrupt.h>
+#include <linux/bio.h>
 
 /* on architectures without dma-mapping capabilities we need to ensure
  * that the asynchronous path compiles away
@@ -181,6 +182,10 @@ struct dma_async_tx_descriptor *
 async_memcpy(struct page *dest, struct page *src, unsigned int dest_offset,
 	     unsigned int src_offset, size_t len,
 	     struct async_submit_ctl *submit);
+
+struct dma_async_tx_descriptor *
+async_copy_biodata(int frombio, struct bio *bio, struct page *page, int order,
+		   sector_t sector, struct dma_async_tx_descriptor *tx);
 
 struct dma_async_tx_descriptor *
 async_memset(struct page *dest, int val, unsigned int offset,
