@@ -1,7 +1,7 @@
 #
 # Automatically generated make config: don't edit
-# Linux kernel version: 2.6.32.16-jf23
-# Fri Jul 16 14:52:04 2010
+# Linux kernel version: 2.6.32.21-jf24
+# Thu Sep  2 11:02:26 2010
 #
 CONFIG_64BIT=y
 # CONFIG_X86_32 is not set
@@ -53,6 +53,7 @@ CONFIG_X86_64_SMP=y
 CONFIG_X86_HT=y
 CONFIG_X86_TRAMPOLINE=y
 # CONFIG_KTIME_SCALAR is not set
+CONFIG_ARCH_CPU_PROBE_RELEASE=y
 CONFIG_DEFCONFIG_LIST="/lib/modules/$UNAME_RELEASE/.config"
 CONFIG_CONSTRUCTORS=y
 
