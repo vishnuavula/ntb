@@ -25,6 +25,7 @@
  */
 #include <linux/kernel.h>
 #include <linux/highmem.h>
+#include <linux/bio.h>
 #include <linux/mm.h>
 #include <linux/dma-mapping.h>
 #include <linux/async_tx.h>
@@ -92,6 +93,65 @@ async_memcpy(struct page *dest, struct page *src, unsigned int dest_offset,
 	return tx;
 }
 EXPORT_SYMBOL_GPL(async_memcpy);
+
+struct dma_async_tx_descriptor *
+async_copy_biodata(int frombio, struct bio *bio, struct page *page, int order,
+		   sector_t sector, struct dma_async_tx_descriptor *tx)
+{
+	struct bio_vec *bvl;
+	struct page *bio_page;
+	int i;
+	int page_offset;
+	enum async_tx_flags flags = 0;
+	struct async_submit_ctl submit;
+	const size_t blk_size = PAGE_SIZE << order;
+
+	if (bio->bi_sector >= sector)
+		page_offset = (signed)(bio->bi_sector - sector) * 512;
+	else
+		page_offset = (signed)(sector - bio->bi_sector) * -512;
+
+	if (frombio)
+		flags |= ASYNC_TX_FENCE;
+	init_async_submit(&submit, flags, tx, NULL, NULL, NULL);
+
+	bio_for_each_segment(bvl, bio, i) {
+		int len = bio_iovec_idx(bio, i)->bv_len;
+		int clen;
+		int b_offset = 0;
+
+		if (page_offset < 0) {
+			b_offset = -page_offset;
+			page_offset += b_offset;
+			len -= b_offset;
+		}
+
+		if (len > 0 && page_offset + len > blk_size)
+			clen = blk_size - page_offset;
+		else
+			clen = len;
+
+		if (clen > 0) {
+			b_offset += bio_iovec_idx(bio, i)->bv_offset;
+			bio_page = bio_iovec_idx(bio, i)->bv_page;
+			if (frombio)
+				tx = async_memcpy(page, bio_page, page_offset,
+						  b_offset, clen, &submit);
+			else
+				tx = async_memcpy(bio_page, page, b_offset,
+						  page_offset, clen, &submit);
+		}
+		/* chain the operations */
+		submit.depend_tx = tx;
+
+		if (clen < len) /* hit end of page */
+			break;
+		page_offset +=  len;
+	}
+
+	return tx;
+}
+EXPORT_SYMBOL_GPL(async_copy_biodata);
 
 MODULE_AUTHOR("Intel Corporation");
 MODULE_DESCRIPTION("asynchronous memcpy api");

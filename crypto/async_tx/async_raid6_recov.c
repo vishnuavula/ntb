@@ -338,7 +338,7 @@ async_raid6_2data_recov(int disks, size_t bytes, int faila, int failb,
 	 * available' case be sure to use the scribble buffer to
 	 * preserve the content of 'blocks' as the caller intended.
 	 */
-	if (!async_dma_find_channel(DMA_PQ) || !scribble) {
+	if (async_dma_find_channel(DMA_PQ) == NULL || !scribble) {
 		void **ptrs = scribble ? scribble : (void **) blocks;
 
 		async_tx_quiesce(&submit->depend_tx);
@@ -414,7 +414,7 @@ async_raid6_datap_recov(int disks, size_t bytes, int faila,
 	 * available' case be sure to use the scribble buffer to
 	 * preserve the content of 'blocks' as the caller intended.
 	 */
-	if (!async_dma_find_channel(DMA_PQ) || !scribble) {
+	if (async_dma_find_channel(DMA_PQ) == NULL || !scribble) {
 		void **ptrs = scribble ? scribble : (void **) blocks;
 
 		async_tx_quiesce(&submit->depend_tx);
