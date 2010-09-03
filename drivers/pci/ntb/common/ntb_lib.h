@@ -97,7 +97,6 @@
 #include <linux/crypto.h>
 #include <linux/spinlock_types.h>
 
-
 #define MAX_BARS_USED      2
 #define NTB_SEMAPHORE_USED 1
 #define NTB_SEMAPHORE_FREE 0

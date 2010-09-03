@@ -739,7 +739,14 @@ int16_t ntb_get_link_status(ntb_client_handle_t handle)
 
 	if (link_status & LINK_STATUS_ACTIVE)
 		device->link_status = LINK_UP;
-	else
+		if ((device->dev_type == NTB_DEV_TYPE_CLASSIC) ||
+		    (device->dev_type == NTB_DEV_TYPE_B2B)) {
+			ntb_get_limit_settings(device->dev, NTB_BAR_23,
+				device, SECONDARY_CONFIG);
+			ntb_get_limit_settings(device->dev, NTB_BAR_45,
+					device, SECONDARY_CONFIG);
+		}
+	} else
 		device->link_status = LINK_DOWN;
 
 	return device->link_status;

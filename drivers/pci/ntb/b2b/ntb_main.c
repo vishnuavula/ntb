@@ -89,8 +89,11 @@ static int32_t ntb_get_bar_addresses(struct ntb_device *device);
 static void ntb_release_bar_addresses(struct ntb_device *device);
 
 
-static struct pci_device_id pci_ids[] = { {
-	PCI_DEVICE(NTB_VENDOR_ID, NTB_B2B_DEVICE_ID) }, { 0, },
+static struct pci_device_id pci_ids[] = {
+	{PCI_VDEVICE(INTEL, PCI_DEVICE_ID_INTEL_NTB_B2B_JSF) }, 
+	{PCI_VDEVICE(INTEL, PCI_DEVICE_ID_INTEL_NTB_B2B_SNB) }, 
+
+	{ 0, }
 };
 
 static struct pci_driver ntb_pci_ops = {
@@ -287,7 +290,13 @@ static int32_t ntb_probe(struct pci_dev *dev, const struct pci_device_id *id)
 	bdf));
 
 	device = ntb_get_device(number_devices);
-	device->device_id = NTB_B2B_DEVICE_ID;
+	device->device_id = dev->device;
+
+	NTB_DEBUG_PRINT(("%s device id = %x\n", PREFIX_STRING,
+	device->device_id));
+
+	device->dev_type = NTB_DEV_TYPE_B2B;
+
 	spin_lock_init(&lock_callback_tasklet);
 	spin_lock_init(&lock_pm_event_check);
 
