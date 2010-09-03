@@ -848,8 +848,8 @@ int16_t ntb_get_link_status(ntb_client_handle_t handle)
 
 	if (link_status & LINK_STATUS_ACTIVE) {
 		device->link_status = LINK_UP;
-		if (device->device_id == NTB_CLASSIC_DEVICE_ID ||
-		device->device_id == NTB_B2B_DEVICE_ID) {
+		if ((device->dev_type == NTB_DEV_TYPE_CLASSIC) ||
+		    (device->dev_type == NTB_DEV_TYPE_B2B)) {
 			ntb_get_limit_settings(device->dev, NTB_BAR_23,
 				device, SECONDARY_CONFIG);
 			ntb_get_limit_settings(device->dev, NTB_BAR_45,
