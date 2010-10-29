@@ -39,6 +39,7 @@
 #define to_ioat_desc(lh) container_of(lh, struct ioat_desc_sw, node)
 #define tx_to_ioat_desc(tx) container_of(tx, struct ioat_desc_sw, txd)
 #define to_dev(ioat_chan) (&(ioat_chan)->device->pdev->dev)
+#define to_pdev(ioat_chan) ((ioat_chan)->device->pdev)
 
 #define chan_num(ch) ((int)((ch)->reg_base - (ch)->device->reg_base) / 0x80)
 
@@ -96,6 +97,9 @@ struct ioat_chan_common {
 	#define IOAT_COMPLETION_ACK 1
 	#define IOAT_RESET_PENDING 2
 	#define IOAT_KOBJ_INIT_FAIL 3
+	#define IOAT_RESHAPE_PENDING 4
+	#define IOAT_ARM_FAIL 5
+	#define IOAT3_VAL_PENDING 6
 	struct timer_list timer;
 	#define COMPLETION_TIMEOUT msecs_to_jiffies(100)
 	#define IDLE_TIMEOUT msecs_to_jiffies(2000)
@@ -198,19 +202,19 @@ struct ioat_desc_sw {
 
 static inline void
 __dump_desc_dbg(struct ioat_chan_common *chan, struct ioat_dma_descriptor *hw,
-		struct dma_async_tx_descriptor *tx, int id)
+		struct dma_async_tx_descriptor *tx)
 {
 	struct device *dev = to_dev(chan);
 
-	dev_dbg(dev, "desc[%d]: (%#llx->%#llx) cookie: %d flags: %#x"
-		" ctl: %#x (op: %d int_en: %d compl: %d)\n", id,
+	dev_dbg(dev, "desc: (%#llx->%#llx) cookie: %d flags: %#x"
+		" ctl: %#x (op: %d int_en: %d compl: %d)\n",
 		(unsigned long long) tx->phys,
 		(unsigned long long) hw->next, tx->cookie, tx->flags,
 		hw->ctl, hw->ctl_f.op, hw->ctl_f.int_en, hw->ctl_f.compl_write);
 }
 
 #define dump_desc_dbg(c, d) \
-	({ if (d) __dump_desc_dbg(&c->base, d->hw, &d->txd, desc_id(d)); 0; })
+	({ if (d) __dump_desc_dbg(&c->base, d->hw, &d->txd); 0; })
 
 static inline void ioat_set_tcp_copy_break(unsigned long copybreak)
 {
@@ -312,10 +316,24 @@ static inline bool is_ioat_suspended(unsigned long status)
 	return ((status & IOAT_CHANSTS_STATUS) == IOAT_CHANSTS_SUSPENDED);
 }
 
+static inline bool is_ioat_armed(unsigned long status)
+{
+	return ((status & IOAT_CHANSTS_STATUS) == IOAT_CHANSTS_ARMED);
+}
+
+static inline void ioat_check_armed(struct ioat_chan_common *chan)
+{
+	u64 status = ioat_chansts(chan);
+
+	if (!is_ioat_armed(status) &&
+	    !test_and_set_bit(IOAT_ARM_FAIL, &chan->state))
+		dev_WARN(to_dev(chan), "failed to arm channel\n");
+}
+
 /* channel was fatally programmed */
 static inline bool is_ioat_bug(unsigned long err)
 {
-	return !!err;
+	return !!(err & ~(IOAT_CHANERR_XOR_P_OR_CRC_ERR|IOAT_CHANERR_XOR_Q_ERR));
 }
 
 static inline void ioat_unmap(struct pci_dev *pdev, dma_addr_t addr, size_t len,

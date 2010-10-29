@@ -1,0 +1,130 @@
+bbu: Battery Backed Block-device Cache
+--------------------------------------
+
+CONTENTS
+	1) Introduction
+	2) Usage - Associating a block device with a region
+	3) Attributes - sysfs status and control knobs
+
+1) Introduction:
+The 'bbu' driver implements a cache that block devices can use to buffer
+writes to non-volatile system memory.  It requires a system that
+identifies a protected memory region in the system e820 table with a
+type-code of '6'.  The e820 handler is modified to include this adr
+section in the calculation of max_pfn so that it gets entries in the
+memmap.  It also reserves the memory with bootmem so that it can be
+passed to the bbu driver later when it is loaded.
+
+The bbu driver attaches to each adr (asynchronous dram refresh /
+battery-backed) memory space defined in the system e820 table.  It
+allows each space to be carved into a maximum of 64 regions (struct
+bbu_region).  Each of these regions has a name and can be associated
+with a backing block device via an 128-bit uuid.
+
+Usage - Managing cache regions:
+To create a new region userspace writes a string to:
+
+	/sys/module/bbu/parameters/new_region
+
+...with the following format:
+
+	<name>:<size>:<order>
+
+Where 'size' and 'order' are optional.  The default size consumes the
+full adr memory space, the default order is 0.  'order' defines the
+allocation size of each block in the cache as 2^order pages.  'name' is
+limited to 16 alpha numeric characters, 'size' is limited to a 5-digit
+even decimal number, and 'order' is limited to a 2-digit decimal number.
+
+Once a region has been created it can be further manipulated via the
+attributes located at:
+
+	/sys/class/bbu/<name>
+
+See the "Attributes" section below for more details.
+
+2) Usage - Associating a block device with a region:
+To associate a block device, currently only md/raid456 devices, a uuid
+must be registered with the cache region.  Assuming a raid5 array named
+'md0' and a cache region named 'cache0' the following command will
+setup the association.
+
+	cat /sys/block/md0/md/uuid > /sys/class/bbu/cache0/uuid
+
+Once this association is established and the raid array is restarted the
+cache region will capture and store write request in protected memory.
+When the cache is no longer needed it can be detached by:
+
+	echo 0 > /sys/block/md0/md/bbu
+
+Note that this command will fail while the cache holds dirty data, so it
+may be necessary to first flush the cache:
+
+	echo 1 > /sys/class/bbu/cache0/flush
+
+TODO: modify mdadm to write the associate an array with the cache at
+      array creation time.
+TODO: modify mdadm to flush adr caches and unregister bbu caches before
+      stopping arrays
+
+3) Attributes - sysfs status and control knobs:
+bbu/active [ro]:
+  Number of currently in-flight cache entries i.e. number cache lines currently
+  being manipulated.
+
+bbu/debug [ro]:
+  [Only available when the driver has been compiled with DEBUG defined]  Causes
+  the bbu the driver to dump the internal state of the cache included all cache
+  entries and their state.   Example for a 1 entry cache:
+
+    adr adr.0: bbu/cache0: dump_cache lists: ( inactive ) flags: () requesters: 0 bypass: 0
+    adr adr.0: bbu/cache0: dump_ent ent: 1000 state: ( ) count: 0
+    adr adr.0: bbu/cache0:    blk3 state 4 toread (null) read (null) write (null) written (null)
+    adr adr.0: bbu/cache0:    blk2 state 4 toread (null) read (null) write (null) written (null)
+    adr adr.0: bbu/cache0:    blk1 state 4 toread (null) read (null) write (null) written (null)
+    adr adr.0: bbu/cache0:    blk0 state 4 toread (null) read (null) write (null) written (null)
+
+bbu/dirty [ro]:
+  Number of dirty cache entries.
+
+bbu/state [rw]:
+  Display the current state of the cache as one of 'active', 'inactive',
+  or 'failed'.  The active/inactive states indicate that whether a backing
+  device is currently registered with the cache.  The failed state
+  indicates that the cache is holding dirty data that could not be flushed
+  due to io errors signaled by the backing device. Writing 'delete' to
+  this attribute causes the region to be removed, provided the cache is
+  currently in the inactive state.  If it is active a 'delete' operation
+  will fail.
+
+bbu/entry_count [ro]:
+  Total number of entries in the cache.  If the backing device specified a
+  stripe geometry at registration time there then each entry will
+  correspond to one stripe with one cache block per stripe-member.  In the
+  non-striped case each entry will correspond to one block.
+
+bbu/flush [wo]:
+  Write '1' to this attribute to cause all dirty entries to be flushed
+  to the backing device.
+ 
+bbu/meta_pfn [ro]:
+  Page-frame-number for the start of the metadata for this cache.
+
+bbu/order [ro]:
+  Current block allocation order for the cache.  Effective size is 2^order *
+  PAGE_SIZE.
+
+bbu/pfn [ro]:
+  Starting page-frame-number for the data portion of the cache.  Data is
+  stored immediately following the metadata.
+
+bbu/size [ro]:
+  Size (in megabytes) of the cache.
+
+bbu/uuid [rw]:
+  UUID of the currently associated block-device.  Write to this attribute
+  while the cache is inactive will establish a new backing device association.
+
+bbu/writeback [ro]:
+  Number of cache entries currently having their dirty data written to the
+  backing device.

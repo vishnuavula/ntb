@@ -71,6 +71,17 @@ static struct pci_device_id ioat_pci_tbl[] = {
 	{ PCI_VDEVICE(INTEL, PCI_DEVICE_ID_INTEL_IOAT_JSF7) },
 	{ PCI_VDEVICE(INTEL, PCI_DEVICE_ID_INTEL_IOAT_JSF8) },
 	{ PCI_VDEVICE(INTEL, PCI_DEVICE_ID_INTEL_IOAT_JSF9) },
+	
+	{ PCI_VDEVICE(INTEL, PCI_DEVICE_ID_INTEL_IOAT_SNB0) },
+	{ PCI_VDEVICE(INTEL, PCI_DEVICE_ID_INTEL_IOAT_SNB1) },
+	{ PCI_VDEVICE(INTEL, PCI_DEVICE_ID_INTEL_IOAT_SNB2) },
+	{ PCI_VDEVICE(INTEL, PCI_DEVICE_ID_INTEL_IOAT_SNB3) },
+	{ PCI_VDEVICE(INTEL, PCI_DEVICE_ID_INTEL_IOAT_SNB4) },
+	{ PCI_VDEVICE(INTEL, PCI_DEVICE_ID_INTEL_IOAT_SNB5) },
+	{ PCI_VDEVICE(INTEL, PCI_DEVICE_ID_INTEL_IOAT_SNB6) },
+	{ PCI_VDEVICE(INTEL, PCI_DEVICE_ID_INTEL_IOAT_SNB7) },
+	{ PCI_VDEVICE(INTEL, PCI_DEVICE_ID_INTEL_IOAT_SNB8) },
+	{ PCI_VDEVICE(INTEL, PCI_DEVICE_ID_INTEL_IOAT_SNB9) },
 
 	{ 0, }
 };
@@ -83,8 +94,6 @@ static void __devexit ioat_remove(struct pci_dev *pdev);
 static int ioat_dca_enabled = 1;
 module_param(ioat_dca_enabled, int, 0644);
 MODULE_PARM_DESC(ioat_dca_enabled, "control support of dca service (default: 1)");
-
-struct kmem_cache *ioat2_cache;
 
 #define DRV_NAME "ioatdma"
 
@@ -190,14 +199,7 @@ static int __init ioat_init_module(void)
 	pr_info("%s: Intel(R) QuickData Technology Driver %s\n",
 		DRV_NAME, IOAT_DMA_VERSION);
 
-	ioat2_cache = kmem_cache_create("ioat2", sizeof(struct ioat_ring_ent),
-					0, SLAB_HWCACHE_ALIGN, NULL);
-	if (!ioat2_cache)
-		return -ENOMEM;
-
 	err = pci_register_driver(&ioat_pci_driver);
-	if (err)
-		kmem_cache_destroy(ioat2_cache);
 
 	return err;
 }
@@ -206,6 +208,5 @@ module_init(ioat_init_module);
 static void __exit ioat_exit_module(void)
 {
 	pci_unregister_driver(&ioat_pci_driver);
-	kmem_cache_destroy(ioat2_cache);
 }
 module_exit(ioat_exit_module);
