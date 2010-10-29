@@ -8,6 +8,17 @@
 #include <linux/init.h>
 #include <asm/pci_x86.h>
 
+/*
+ * Intel JKT A1 NTB: Fixup for incorrect HDR register 
+ */
+static void __devinit pci_fixup_jkt_non_transparent_bridge(struct pci_dev *dev)
+{
+	dev_warn(&dev->dev, "Found Intel Jaketown A1 NTB\n");
+	dev->class = PCI_CLASS_NOT_DEFINED;
+	dev->hdr_type = 0x0;
+}
+DECLARE_PCI_FIXUP_EARLY(PCI_VENDOR_ID_INTEL, 0x3c0d, pci_fixup_jkt_non_transparent_bridge);
+
 static void __devinit pci_fixup_i450nx(struct pci_dev *d)
 {
 	/*
