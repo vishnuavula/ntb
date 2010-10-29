@@ -148,7 +148,6 @@ int ntbeth_open(struct net_device *dev)
 	struct ntbeth_priv * priv;
 	priv = netdev_priv(dev);
 	NTBETHDEBUG("Made it to ntbeth_open\n");
-	memcpy(dev->dev_addr, NTBETH_MAC, ETH_ALEN);
 	update_peer_status(dev, NTBETH_LOCAL_PEER_UP);
 	ntbdev_send_ping_doorbell_interrupt(&priv->ntbdev);
 	return 0;
@@ -431,8 +430,9 @@ int ntbeth_init(struct net_device *dev)
 	update_peer_status(dev,NTBETH_LOCAL_PEER_DOWN);
 	update_peer_status(dev,NTBETH_REMOTE_PEER_DOWN);
 	dev->mtu		= NTBETH_MAX_MTUSIZE;
-	dev->flags		|= IFF_NOARP;
-	dev->features		|= NETIF_F_NO_CSUM;
+
+	random_ether_addr(dev->dev_addr);
+
 	NTBETHDEBUG("rx_int_doorbell num  %d\n", rx_int_doorbell_num);
 	// initialize ntb device info structures.
 	if((err = ntbdev_init(&priv->ntbdev, bar23_size, bar45_size, rx_int_doorbell_num))) {
