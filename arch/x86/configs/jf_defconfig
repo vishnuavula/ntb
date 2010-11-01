@@ -1,7 +1,7 @@
 #
 # Automatically generated make config: don't edit
-# Linux kernel version: 2.6.34-jkt1
-# Tue Jul  6 10:32:13 2010
+# Linux kernel version: 2.6.34.7-jkt4
+# Mon Nov  1 13:19:33 2010
 #
 CONFIG_64BIT=y
 # CONFIG_X86_32 is not set
@@ -55,6 +55,7 @@ CONFIG_X86_64_SMP=y
 CONFIG_X86_HT=y
 CONFIG_X86_TRAMPOLINE=y
 # CONFIG_KTIME_SCALAR is not set
+CONFIG_ARCH_CPU_PROBE_RELEASE=y
 CONFIG_DEFCONFIG_LIST="/lib/modules/$UNAME_RELEASE/.config"
 CONFIG_CONSTRUCTORS=y
 
@@ -508,8 +509,14 @@ CONFIG_PCI_MSI=y
 CONFIG_HT_IRQ=y
 # CONFIG_PCI_IOV is not set
 CONFIG_PCI_IOAPIC=y
+
+#
+# Non-Transparent Bridge Support (EXPERIMENTAL)
+#
 CONFIG_NTB=m
 CONFIG_NTB_B2B=m
+CONFIG_NTB_RP=m
+CONFIG_RP_NTB=m
 CONFIG_NTB_ETH=m
 CONFIG_ISA_DMA_API=y
 CONFIG_K8_NB=y
@@ -977,6 +984,10 @@ CONFIG_WIRELESS=y
 
 #
 # CFG80211 needs to be enabled for MAC80211
+#
+
+#
+# Some wireless drivers require a rate control algorithm
 #
 # CONFIG_WIMAX is not set
 # CONFIG_RFKILL is not set
