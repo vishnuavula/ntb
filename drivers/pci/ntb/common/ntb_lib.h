@@ -175,6 +175,12 @@ there is a silicon bug that requires us to write all F's here for now.
 #define NTB_INTERRUPTS_ENABLED  1
 #define NTB_DB                  1
 #define NTB_SEC_MSIX_MAP        0x4000
+
+#ifdef CONFIG_SNB_JKTA1
+#define NTB_SECONDARY_BAR_2_ADDRESS		0x0000004000000000
+#define NTB_SECONDARY_BAR_4_ADDRESS		0x0000008000000000
+#endif
+
 /* struct to hold scratchpad registers */
 struct scratchpad_registers {
     uint32_t registers[NTB_TOTAL_SCRATCHPAD_NO];

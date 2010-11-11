@@ -522,3 +522,12 @@ config X86_PTRACE_BTS
 
 	  Say Y unless there is no application development on this machine
 	  and you want to save a small amount of code size.
+
+config SNB_JKTA1
+	bool "SandyBridge (Jaketown A1) silicon workarounds"
+	default n
+	depends on CPU_SUP_INTEL && MCORE2
+	---help---
+	  Workaround code for Jaketown A1 silicon bugs. Mainly NTB.
+
+	  If unsure, say N

@@ -328,6 +328,19 @@ static int32_t ntb_probe(struct pci_dev *dev, const struct pci_device_id *id)
 		return -EPERM;
 	}
 
+#ifdef CONFIG_SNB_JKTA1
+	/* 
+	 * Workaround for Jaketown A1 - Set Secondary BAR23 and BAR 45
+	 * Base Address Registers 
+	 */
+	ntb_lib_write_64(device->mm_regs,
+			 NTB_SECONDARY_BASE_2_OFFSET,
+			 NTB_SECONDARY_BAR_2_ADDRESS);
+	ntb_lib_write_64(device->mm_regs,
+			 NTB_SECONDARY_BASE_4_OFFSET,
+			 NTB_SECONDARY_BAR_4_ADDRESS);
+#endif       
+
 	/* Valid only in back to back configuration */
 	ntb_lib_write_16(device->mm_regs, BUS_MASTER_MEMORY_OFFSET,
 	BUS_MASTER_MEMORY_ENABLE);
