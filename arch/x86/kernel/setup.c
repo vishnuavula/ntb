@@ -431,7 +431,9 @@ static void __init reserve_adr(void)
 		if (ei->type != E820_PROTECTED_KERN)
 			continue;
 
-		reserve_early(ei->addr, ei->addr + ei->size, "ADR");
+		memblock_x86_reserve_range(ei->addr,
+					   ei->addr + ei->size,
+					   "ADR");
 	}
 	#endif
 }

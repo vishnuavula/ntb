@@ -319,7 +319,7 @@ static int md_make_request(struct request_queue *q, struct bio *bio)
 	 */
 	sectors = bio_sectors(bio);
 	if (mddev->bbu_make_request)
-		rv = mddev->pers->make_request(mddev, bio);
+		rv = mddev->bbu_make_request(q, bio);
 	else
 		rv = mddev->pers->make_request(mddev, bio);
 

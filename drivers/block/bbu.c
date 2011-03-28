@@ -1003,7 +1003,7 @@ static int bbu_make_request(struct request_queue *q, struct bio *bi)
 				    conf->cache_lock, /* nothing */);
 
 	conf->requesters++;
-	if (unlikely(bio_barrier(bi))) {
+	if (unlikely(bi->bi_rw & REQ_FLUSH)) {
 		conf->barrier_active = 1;
 		wait_event_lock_irq(conf->wait_for_ent,
 				    conf->requesters == 1 &&
@@ -1187,7 +1187,7 @@ static int bbu_blkdev_get(void *param)
 
 	dev_dbg(dev, "%s: %s %s\n", conf->name, __func__, bdevname(bd, b));
 
-	if (blkdev_get(bd, FMODE_READ|FMODE_WRITE) != 0) {
+	if (blkdev_get(bd, FMODE_READ|FMODE_WRITE, NULL) != 0) {
 		dev_err(dev, "%s: blkdev_get for '%s' failed\n",
 			conf->name, bdevname(bd, b));
 

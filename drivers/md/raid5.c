@@ -980,8 +980,8 @@ ops_run_biodrain(struct stripe_head *sh, struct dma_async_tx_descriptor *tx)
 				dev->sector + STRIPE_SECTORS) {
 				if (wbi->bi_rw & REQ_FUA)
 					set_bit(R5_WantFUA, &dev->flags);
-				tx = async_copy_data(1, wbi, dev->page,
-					dev->sector, tx);
+				tx = async_copy_biodata(1, wbi, dev->page, 0,
+							dev->sector, tx);
 				wbi = r5_next_bio(wbi, dev->sector);
 			}
 		}
@@ -4078,6 +4078,13 @@ static int make_request(mddev_t *mddev, struct bio * bi)
 	return 0;
 }
 
+static inline int make_request_legacy(struct request_queue *q, struct bio *bio)
+{
+	mddev_t *mddev = q->queuedata;
+
+	return make_request(mddev, bio);
+}
+
 static sector_t raid5_size(mddev_t *mddev, sector_t sectors, int raid_disks);
 
 static sector_t reshape_request(mddev_t *mddev, sector_t sector_nr, int *skipped)
@@ -4841,7 +4848,10 @@ static raid5_conf_t *setup_conf(mddev_t *mddev)
 	if (raid5_alloc_percpu(conf) != 0)
 		goto abort;
 
-	mfn = bbu_register(mddev->uuid, mddev->gendisk, make_request, &info);
+	mfn = bbu_register(mddev->uuid,
+			   mddev->gendisk,
+			   make_request_legacy,
+			   &info);
 	if (!IS_ERR(mfn)) {
 		pr_info("raid5: registered with battery backed cache\n");
 		mddev->bbu_make_request = mfn;

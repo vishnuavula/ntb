@@ -17,6 +17,7 @@
  */
 #ifndef _ASYNC_TX_H_
 #define _ASYNC_TX_H_
+#include <linux/blk_types.h>
 #include <linux/dmaengine.h>
 #include <linux/spinlock.h>
 #include <linux/interrupt.h>
