@@ -1291,6 +1291,15 @@ config ADR
 
 	  Say Y if unsure
 
+config ADR_MEM_TYPE
+	int "ACPI memory type for ADR reserved memory"
+	depends on ADR
+	default "12"
+	---help---
+	The memory type specified by the BIOS for ADR reserved memory. On the
+	Intel JasperForest CPU the BIOS used 6. With the Intel Jaketown CPU the
+	type has been changed to 12 due to 6 being reserved by ACPI spec now.
+
 config HIGHPTE
 	bool "Allocate 3rd-level pagetables from highmem"
 	depends on HIGHMEM

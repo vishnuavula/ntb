@@ -55,7 +55,7 @@
 /* protected RAM interpreted type, precludes the need to pass extended
  * attributes to every e820 routine that looks at 'type'
  */
-#define E820_PROTECTED_KERN	  129
+#define E820_PROTECTED_KERN	  CONFIG_ADR_MEM_TYPE
 
 #ifndef __ASSEMBLY__
 #include <linux/types.h>
