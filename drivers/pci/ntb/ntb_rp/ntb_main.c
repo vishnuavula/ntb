@@ -1006,10 +1006,10 @@ static void ntb_release_bar_addresses(struct ntb_device *device)
 /*****************************************************************************
  * See ntb_main.h
  ****************************************************************************/
-int32_t ntb_get_rootport_api(struct ntb_api_export *funcs)
+int32_t ntb_get_api(struct ntb_api_export *funcs)
 {
 	int32_t err = SUCCESS;
-	NTB_DEBUG_PRINT(("%s Entering ntb_get_rootport_api\n",
+	NTB_DEBUG_PRINT(("%s Entering ntb_get_api\n",
 		PREFIX_STRING));
 	if (funcs != NULL) {
 		*funcs = ntb_api;
@@ -1020,11 +1020,11 @@ int32_t ntb_get_rootport_api(struct ntb_api_export *funcs)
 		err = FAILED;
 	}
 
-	NTB_DEBUG_PRINT(("%s Exiting ntb_get_rootport_api\n",
+	NTB_DEBUG_PRINT(("%s Exiting ntb_get_api\n",
 		PREFIX_STRING));
 	return err;
 }
-EXPORT_SYMBOL(ntb_get_rootport_api);
+EXPORT_SYMBOL(ntb_get_api);
 
 /*****************************************************************************
  * See ntb_main.h
