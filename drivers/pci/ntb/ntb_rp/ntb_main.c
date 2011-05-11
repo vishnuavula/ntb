@@ -82,8 +82,8 @@ static int32_t ntb_get_bar_addresses(struct ntb_device *device);
 static void ntb_release_bar_addresses(struct ntb_device *device);
 
 static struct pci_device_id pci_ids[] = { 
-	{PCI_VDEVICE(INTEL, PCI_DEVICE_ID_INTEL_NTB_B2B_JSF) }, 
-	{PCI_VDEVICE(INTEL, PCI_DEVICE_ID_INTEL_NTB_B2B_SNB) },
+	{PCI_VDEVICE(INTEL, PCI_DEVICE_ID_INTEL_NTB_RP_JSF) },
+	{PCI_VDEVICE(INTEL, PCI_DEVICE_ID_INTEL_NTB_RP_SNB) },
 };
 
 static struct pci_driver ntb_pci_ops = {
