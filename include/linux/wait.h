@@ -566,6 +566,48 @@ do {									\
 	__ret;								\
 })
 
+#define __wait_event_lock_irq(wq, condition, lock, cmd) 		\
+do {									\
+	wait_queue_t __wait;						\
+	init_waitqueue_entry(&__wait, current);				\
+									\
+	add_wait_queue(&wq, &__wait);					\
+	for (;;) {							\
+		set_current_state(TASK_UNINTERRUPTIBLE);		\
+		if (condition)						\
+			break;						\
+		spin_unlock_irq(&lock);					\
+		cmd;							\
+		schedule();						\
+		spin_lock_irq(&lock);					\
+	}								\
+	current->state = TASK_RUNNING;					\
+	remove_wait_queue(&wq, &__wait);				\
+} while (0)
+
+/**
+ * wait_event_lock_irq - sleep until a condition, evaluated under lock, is true
+ * @wq: the waitqueue to wait on
+ * @condition: a C expression for the event to wait for
+ * @lock: spinlock_t to acquire before evaluating condition
+ * @cmd: optional statement to run after each false wakeup
+ *
+ * The process is put to sleep (TASK_UNINTERRUPTIBLE) until the
+ * @condition evaluates to true. The @condition is checked, under
+ * spin_lock_irq(&lock),  each time the waitqueue @wq is woken up.
+ *
+ * wake_up() must be called after changing any variable that could
+ * change the result of the wait condition.
+ */
+#define wait_event_lock_irq(wq, condition, lock, cmd) 			\
+do {									\
+	if (condition)	 						\
+		break;							\
+	__wait_event_lock_irq(wq, condition, lock, cmd);		\
+} while (0)
+
+
+
 /*
  * These are the old interfaces to sleep waiting for an event.
  * They are racy.  DO NOT use them, use the wait_event* interfaces above.
