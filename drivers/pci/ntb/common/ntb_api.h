@@ -647,9 +647,7 @@ struct ntb_api_export {
 #endif
 };
 
-int32_t ntb_get_b2b_api(struct ntb_api_export *api);
-int32_t ntb_get_rootport_api(struct ntb_api_export *api);
-int32_t ntb_get_classic_api(struct ntb_api_export *api);
+int32_t ntb_get_api(struct ntb_api_export *api);
 
 
 

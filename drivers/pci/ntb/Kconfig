@@ -1,38 +1,32 @@
 menu "Non-Transparent Bridge Support (EXPERIMENTAL)"
 
 config NTB
-	tristate
+	bool "ntb: NTB hardware driver"
 	default n
 	depends on PCI && X86 && EXPERIMENTAL
 
+choice
+	prompt "NTB Transport"
+	depends on NTB
+	default NTB_B2B
+	---help---
+	The choices for transport are NTB Back to Back, NTB Classic
+	Rootport Primary node, and NTB Classic Rootport Secondary node
+
 config NTB_B2B
-	tristate "NTB Back to Back Mode"
-	depends on PCI && X86 && EXPERIMENTAL
-	select NTB
-	help
-	  This is the NTB mode where both hosts have NTB hardware and they
-	  are connected to each other.
+	bool "NTB Back to Back Mode"
 
 config NTB_RP
-	tristate "NTB Classic Mode"
-	depends on PCI && X86 && EXPERIMENTAL
-	select NTB
-	help
-	  This is the classic NTB mode where only the primary host has the
-	  NTB hardware. This is the mode for the primary host.
+	bool "NTB Classic Rootport Primary"
 
-config RP_NTB 
-	tristate "NTB Rootport Mode"
-	depends on PCI && X86 && EXPERIMENTAL
-	select NTB
-	help
-	  This is the classic NTB mode where only the primary host has the
-	  NTB hardware. This is the mode for the secondary host that only
-	  has the root port.
+config RP_NTB
+	bool "NTB Classic Rootport Secondary"
+
+endchoice
 
 config NTB_ETH 
 	tristate "ntbeth: NTB to Ethernet emulation"
-	depends on PCI && X86 && EXPERIMENTAL
+	depends on PCI && X86 && EXPERIMENTAL && NTB
 	help
 	  ntbeth is a Linux network driver that uses NTB PCI-E Link as
 	  point-to-point link between two electrically separated
