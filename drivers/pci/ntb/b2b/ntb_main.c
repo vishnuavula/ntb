@@ -15,6 +15,8 @@
  * this program; if not, write to the Free Software Foundation, Inc., 
  * 51 Franklin St - Fifth Floor, Boston, MA 02110-1301 USA.
  *
+ * The full GNU General Public License is included in this distribution in
+ * the file called "COPYING".
  */
 
 #include "../common/ntb_main.h"
@@ -216,11 +218,15 @@ static int32_t ntb_probe(struct pci_dev *dev, const struct pci_device_id *id)
 	/* Link enabled, sec side r/wr secondary regs, snoop set to default */
 	uint32_t cntl_value = 0;
 	uint32_t attempt = 0;
+	uint32_t uiTemp = 0;
 	uint16_t doorbell = 0;
 	struct ntb_device *device = NULL;
 	enum ntb_handle_prefix_t prefix;
 
 	NTB_DEBUG_PRINT(("NTB: PROBE FOUND DEVICE ID\n"));
+  pci_read_config_dword(dev,0x188,&uiTemp);
+  uiTemp |= 0x4000000;
+  pci_write_config_dword(dev,0x188,uiTemp);
 
 	if (dev->bus->number == NTB_BUS_NUMBER_P0) {
 		device = ntb_get_device(PROC_0);
@@ -271,21 +277,12 @@ static int32_t ntb_probe(struct pci_dev *dev, const struct pci_device_id *id)
 
 	ntb_lib_write_16(device->mm_regs, NTB_PDOORBELL_OFFSET,
 	doorbell);
+	ntb_lib_write_16(device->mm_regs, NTB_PDOORBELL_OFFSET,
+	0xffff);
 
 	NTB_DEBUG_PRINT(("NTB: Clear Doorbell \n"));
 
-	attempt = ntb_set_interrupts(device);
-	if (attempt != 0) {
-		NTB_DEBUG_PRINT(
-		("NTB: INTERRUPT ALLOCATION FAILURE IN PROBE\n"));
-		return -EPERM;
-	}
 
-	ntb_lib_write_16(device->mm_regs, DOORBELL_MASK_OFFSET,
-	DOORBELL_MASK_VALUE);
-
-	ntb_lib_write_32(device->mm_regs, device->link_control_offset,
-	cntl_value);
 
 	ntb_increment_number_devices();
 
@@ -308,6 +305,18 @@ static int32_t ntb_probe(struct pci_dev *dev, const struct pci_device_id *id)
 	NTB_DEBUG_PRINT(("NTB: SUCCESSFUL NTB LOAD\n"));
 
 	pci_set_drvdata(dev, device);
+
+	attempt = ntb_set_interrupts(device);
+	if (attempt != 0) {
+		NTB_DEBUG_PRINT(
+		("NTB: INTERRUPT ALLOCATION FAILURE IN PROBE\n"));
+		return -EPERM;
+	}
+	ntb_lib_write_16(device->mm_regs, DOORBELL_MASK_OFFSET,
+	DOORBELL_MASK_VALUE);
+
+	ntb_lib_write_32(device->mm_regs, device->link_control_offset,
+	cntl_value);
 
 	return 0;
 
@@ -467,6 +476,7 @@ static void callback_tasklet_func(unsigned long data)
 		ntb_lib_read_rep(device->mm_regs, offset, &pad,
 				NTB_TOTAL_SCRATCHPAD_NO);
 		NTB_DEBUG_PRINT(("NTB: Before doorbell check \n"));
+#if 0
 		if (doorbell_array[i] & device->heartbeat_bit) {
 			/*Call back clients, with heartbeat message */
 			heartbeat = client_list->heartbeat_owner;
@@ -475,6 +485,7 @@ static void callback_tasklet_func(unsigned long data)
 				heartbeat,
 				doorbell_array[i], pad);
 		}
+#endif 
 		NTB_DEBUG_PRINT(("NTB: Before link check \n"));
 		if (doorbell_array[i] & NTB_LINK_STATUS_CHANGE) {
 			if (device->link_status == LINK_UP)

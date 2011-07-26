@@ -1,5 +1,5 @@
 /*
- * This program implements API to control NTB hardware.
+ * This program implements network driver over NTB hardware.
  * Copyright (c) 2009, Intel Corporation.
  *
  * This program is free software; you can redistribute it and/or modify it
@@ -15,7 +15,11 @@
  * this program; if not, write to the Free Software Foundation, Inc., 
  * 51 Franklin St - Fifth Floor, Boston, MA 02110-1301 USA.
  *
+ * The full GNU General Public License is included in this distribution in
+ * the file called "COPYING".
+ *
  */
+
 #ifndef NTBDEV_H
 #define NTBDEV_H
 
@@ -67,7 +71,7 @@ struct ntbeth_ntbdev
  void *ping_int_callback_ref;
  void (*close_int_callback)(void *);
  void *close_int_callback_ref;
-
+ spinlock_t db_lock; // one has to obtain this lock for every door bell access, serializing access to door bell. also insert delay of 10 usec after every door bell
 };
 
 // door bell assignments are as follows relatively rx_int_doorbell position
@@ -116,5 +120,6 @@ void ntbdev_send_close_interrupt(struct ntbeth_ntbdev *pdev);
 
 void ntbdev_unmask_doorbell_interrupts(struct ntbeth_ntbdev *pdev);
 void ntbdev_mask_doorbell_interrupts(struct ntbeth_ntbdev *pdev);
+void ntbdev_send_doorbell(struct ntbeth_ntbdev *pdev, unsigned short doorbell_value);
 
 #endif 
