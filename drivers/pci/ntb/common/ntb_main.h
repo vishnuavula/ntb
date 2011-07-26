@@ -65,10 +65,6 @@
 #include "ntb_lib.h"
 #include "ntb_api.h"
 
-#define NTB_B2B_DEVICE_ID        0x3725
-#define NTB_CLASSIC_DEVICE_ID    0x3726
-#define NTB_ROOT_PORT_DEVICE_ID  0x3727
-#define NTB_VENDOR_ID            0x8086
 #define EXTENDED_SPACE           0x500
 
 #define NTB_MSIX_NAME "NTB_MSIX"
@@ -142,6 +138,11 @@ struct ntb_device {
 	int32_t device_index; /* Index into the array of devices */
 	uint16_t bdf;
 	uint16_t device_id;
+
+#define NTB_DEV_TYPE_B2B	0
+#define NTB_DEV_TYPE_CLASSIC	1
+#define NTB_DEV_TYPE_RP		2
+	uint32_t dev_type;
 
 
 
