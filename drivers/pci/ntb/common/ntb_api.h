@@ -538,6 +538,8 @@ int32_t ntb_read_remote_msix(struct scratchpad_registers *pad,
 ntb_client_handle_t handle);
 #endif
 
+struct device * ntb_get_linux_dev_by_handle(ntb_client_handle_t handle);
+
 /*****************************************************************************
  *@ingroup NTB_CLIENT_API
  *Structure to hold functions exported to the client driver.
@@ -645,6 +647,8 @@ struct ntb_api_export {
     int32_t (*ntb_read_remote_msix)(struct scratchpad_registers *pad,
     ntb_client_handle_t handle);
 #endif
+
+    struct device * (*ntb_get_linux_dev_by_handle)(ntb_client_handle_t handle);
 };
 
 int32_t ntb_get_api(struct ntb_api_export *api);

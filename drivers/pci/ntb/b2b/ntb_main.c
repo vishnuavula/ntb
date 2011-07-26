@@ -138,7 +138,8 @@ static struct ntb_api_export ntb_api = {
 	.ntb_write_remote_limit            = ntb_write_remote_limit,
 	.ntb_read_remote_limit             = ntb_read_remote_limit,
 	.ntb_write_remote_bar              = ntb_write_remote_bar,
-	.ntb_read_remote_bar               = ntb_read_remote_bar
+	.ntb_read_remote_bar               = ntb_read_remote_bar,
+	.ntb_get_linux_dev_by_handle	   = ntb_get_linux_dev_by_handle
 };
 
 static spinlock_t lock_pm_event_check;   /*  lock for pm acknowledgment */

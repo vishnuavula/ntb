@@ -134,8 +134,10 @@ static struct ntb_api_export ntb_api = {
 	.ntb_write_remote_limit 	   = NULL,
 	.ntb_read_remote_limit		   = NULL,
 	.ntb_write_remote_bar		   = NULL,
-	.ntb_read_remote_bar		   = NULL
+	.ntb_read_remote_bar		   = NULL,
+	.ntb_get_linux_dev_by_handle	   = ntb_get_linux_dev_by_handle
 };
+
 static spinlock_t lock_pm_event_check;	 /*  lock for pm acknowledgment */
 static spinlock_t lock_callback_tasklet; /* lock for doorbell tasklet work */
 static int16_t g_tasklet_data[MAX_DEVICES];

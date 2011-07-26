@@ -527,3 +527,24 @@ int64_t ntb_read_remote_bar(ntb_client_handle_t handle, enum ntb_bar_t bar)
 
 	return address;
 }
+
+struct device *ntb_get_linux_dev_by_handle(ntb_client_handle_t handle)
+{
+	int i;
+	struct device *dev = NULL;
+
+	for (i = 0 ; i < MAX_DEVICES; i++) {
+		NTB_DEBUG_PRINT(("NTB: Device %p\n", &g_ntb[i]));
+		if ((g_ntb[i].client_list.clients[NTB_CLIENT_23].handle ==
+				handle) ||
+		    (g_ntb[i].client_list.clients[NTB_CLIENT_45].handle ==
+				handle)) {
+			struct ntb_device *ndev;
+
+			ndev = &g_ntb[i];
+			dev = &ndev->dev->dev;
+		}
+	}
+
+	return dev;
+}

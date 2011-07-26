@@ -141,10 +141,11 @@ static struct ntb_api_export ntb_api = {
 	.ntb_write_remote_bar		   = ntb_write_remote_bar,
 #ifdef B0_SI_SOLN_CL
 	.ntb_read_remote_bar		   = ntb_read_remote_bar,
-	.ntb_read_remote_msix		   = ntb_read_remote_msix
+	.ntb_read_remote_msix		   = ntb_read_remote_msix,
 #else
-	.ntb_read_remote_bar		   = ntb_read_remote_bar
+	.ntb_read_remote_bar		   = ntb_read_remote_bar,
 #endif
+	.ntb_get_linux_dev_by_handle	   = ntb_get_linux_dev_by_handle
 };
 
 static spinlock_t lock_pm_event_check;	  /*  lock for pm acknowledgment */

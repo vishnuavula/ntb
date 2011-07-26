@@ -96,92 +96,193 @@ void ntbeth_bar45_callback(ntb_client_handle_t handle, int16_t doorbell_value, s
 	NTBETHDEBUG( "Invoked ntbeth_bar45_callback\n");
 }
 
-int ntbdev_init(struct ntbeth_ntbdev *pdev, int bar23_size, int bar45_size, int rx_int_doorbell_num)
+int
+ntbdev_init(struct ntbeth_ntbdev *pdev,
+	    int bar23_size,
+	    int bar45_size,
+	    int rx_int_doorbell_num)
 {
 	unsigned short intbits;
 	unsigned int temp_value;
+	struct device *dev;
+
 	pdev->barinfo[0].bar_size = bar23_size;
 	pdev->barinfo[1].bar_size = bar45_size;
 	pdev->rx_int_doorbell_num = rx_int_doorbell_num;
 	spin_lock_init(&pdev->db_lock);
-	gntbdev = pdev; // remember pointer to ntbdev here because in NTB callbacks we do not have a facility to get the context back. Thus we use global variable
+	/*
+	 * remember pointer to ntbdev here because in NTB callbacks we do not
+	 * have a facility to get the context back. Thus we use global variable
+	 */
+	gntbdev = pdev;
+
 	ntb_get_api(&pdev->funcs);
-	if(pdev->funcs.ntb_get_number_devices() < 1) {
-		printk("ERROR: NO NTB-NTB DEVICES found\n");
+	if (pdev->funcs.ntb_get_number_devices() < 1) {
+		dev_err(NULL, "NO NTB-NTB DEVICES found\n");
 		return (NTBETH_FAIL);
 	}
 
-	pdev->barinfo[NTBETH_BAR23INFO_INDEX].handle = pdev->funcs.ntb_register_client(NTB_BAR_23, ntbeth_bar23_callback,NTBDEV_D3_F0,NULL);
-	if(pdev->barinfo[NTBETH_BAR23INFO_INDEX].handle == -EPERM) {
+	pdev->barinfo[NTBETH_BAR23INFO_INDEX].handle =
+		pdev->funcs.ntb_register_client(NTB_BAR_23,
+						ntbeth_bar23_callback,
+						NTBDEV_D3_F0,
+						NULL);
+	if (pdev->barinfo[NTBETH_BAR23INFO_INDEX].handle == -EPERM)
 		return (NTBETH_FAIL);
-	}
-	pdev->barinfo[NTBETH_BAR23INFO_INDEX].bar_pci_address =  pdev->funcs.ntb_get_bar_address(pdev->barinfo[NTBETH_BAR23INFO_INDEX].handle, NTB_BAR_23);
-	pdev->barinfo[NTBETH_BAR23INFO_INDEX].bar_virt_address =  ioremap(pdev->barinfo[NTBETH_BAR23INFO_INDEX].bar_pci_address, bar23_size);
 
-	pdev->barinfo[NTBETH_BAR45INFO_INDEX].handle = pdev->funcs.ntb_register_client(NTB_BAR_45, ntbeth_bar45_callback,NTBDEV_D3_F0,NULL);
-	if(pdev->barinfo[NTBETH_BAR45INFO_INDEX].handle == -EPERM) {
+	pdev->barinfo[NTBETH_BAR23INFO_INDEX].bar_pci_address =
+		pdev->funcs.ntb_get_bar_address(
+				pdev->barinfo[NTBETH_BAR23INFO_INDEX].handle,
+				NTB_BAR_23);
+
+	pdev->barinfo[NTBETH_BAR23INFO_INDEX].bar_virt_address =
+		ioremap(pdev->barinfo[NTBETH_BAR23INFO_INDEX].bar_pci_address,
+			bar23_size);
+
+	pdev->barinfo[NTBETH_BAR45INFO_INDEX].handle =
+		pdev->funcs.ntb_register_client(NTB_BAR_45,
+						ntbeth_bar45_callback,
+						NTBDEV_D3_F0,
+						NULL);
+	if(pdev->barinfo[NTBETH_BAR45INFO_INDEX].handle == -EPERM)
 		return (NTBETH_FAIL);
-	}
-	pdev->barinfo[NTBETH_BAR45INFO_INDEX].bar_pci_address =  pdev->funcs.ntb_get_bar_address(pdev->barinfo[NTBETH_BAR45INFO_INDEX].handle, NTB_BAR_45);
-	pdev->barinfo[NTBETH_BAR45INFO_INDEX].bar_virt_address =  ioremap(pdev->barinfo[NTBETH_BAR45INFO_INDEX].bar_pci_address, bar45_size);
-	if(pdev->barinfo[NTBETH_BAR45INFO_INDEX].bar_virt_address == NULL) {
+
+	pdev->barinfo[NTBETH_BAR45INFO_INDEX].bar_pci_address =
+		pdev->funcs.ntb_get_bar_address(
+				pdev->barinfo[NTBETH_BAR45INFO_INDEX].handle,
+				NTB_BAR_45);
+
+	pdev->barinfo[NTBETH_BAR45INFO_INDEX].bar_virt_address =
+		ioremap(pdev->barinfo[NTBETH_BAR45INFO_INDEX].bar_pci_address,
+			bar45_size);
+	if(pdev->barinfo[NTBETH_BAR45INFO_INDEX].bar_virt_address == NULL)
 		return(NTBETH_FAIL);
-	}
-	if(ntbdev_alloc_dma_memory(NULL, &pdev->barinfo[NTBETH_BAR23INFO_INDEX].local_memory_virt_addr,pdev->barinfo[NTBETH_BAR23INFO_INDEX].bar_size, &pdev->barinfo[NTBETH_BAR23INFO_INDEX].local_memory_dma_addr))
+
+	dev = pdev->funcs.ntb_get_linux_dev_by_handle(
+			pdev->barinfo[NTBETH_BAR23INFO_INDEX].handle);
+
+	if(ntbdev_alloc_dma_memory(
+		dev,
+		&pdev->barinfo[NTBETH_BAR23INFO_INDEX].local_memory_virt_addr,
+		pdev->barinfo[NTBETH_BAR23INFO_INDEX].bar_size,
+		&pdev->barinfo[NTBETH_BAR23INFO_INDEX].local_memory_dma_addr))
 		return (NTBETH_FAIL);
-	pdev->funcs.ntb_write_translate(pdev->barinfo[NTBETH_BAR23INFO_INDEX].handle, pdev->barinfo[NTBETH_BAR23INFO_INDEX].local_memory_dma_addr);
-	if(ntbdev_alloc_dma_memory(NULL,&pdev->barinfo[NTBETH_BAR45INFO_INDEX].local_memory_virt_addr,pdev->barinfo[NTBETH_BAR45INFO_INDEX].bar_size, &pdev->barinfo[NTBETH_BAR45INFO_INDEX].local_memory_dma_addr))
+
+	pdev->funcs.ntb_write_translate(
+		pdev->barinfo[NTBETH_BAR23INFO_INDEX].handle,
+		pdev->barinfo[NTBETH_BAR23INFO_INDEX].local_memory_dma_addr);
+
+	dev = pdev->funcs.ntb_get_linux_dev_by_handle(
+			pdev->barinfo[NTBETH_BAR45INFO_INDEX].handle);
+
+	if(ntbdev_alloc_dma_memory(
+		dev,
+		&pdev->barinfo[NTBETH_BAR45INFO_INDEX].local_memory_virt_addr,
+		pdev->barinfo[NTBETH_BAR45INFO_INDEX].bar_size,
+		&pdev->barinfo[NTBETH_BAR45INFO_INDEX].local_memory_dma_addr))
 		return (NTBETH_FAIL);
-	pdev->funcs.ntb_write_translate(pdev->barinfo[NTBETH_BAR45INFO_INDEX].handle, pdev->barinfo[NTBETH_BAR45INFO_INDEX].local_memory_dma_addr);
+
+	pdev->funcs.ntb_write_translate(
+		pdev->barinfo[NTBETH_BAR45INFO_INDEX].handle,
+		pdev->barinfo[NTBETH_BAR45INFO_INDEX].local_memory_dma_addr);
+
 	intbits = (0x1F << rx_int_doorbell_num);
-	/*lower bit 0 for rx_int,  bit 1 for tx_ack_int, bit 2 for ping bit 3 for ping_ack, bit 4 for close */
+
+	/*
+	 * lower bit 0 for rx_int,
+	 * bit 1 for tx_ack_int,
+	 * bit 2 for ping
+	 * bit 3 for ping_ack,
+	 * bit 4 for close
+	 */
+
 	/* intbits |= 0x4000; // WC flush ack interrupt */
 
-	/*we are interested in rx_int_doorbell, txack door bell and link change interrupts only.
-	* we set the policy using bar23 client handle
-	*/
-	if(pdev->funcs.ntb_add_policy(pdev->barinfo[NTBETH_BAR23INFO_INDEX].handle, 0, intbits, 0, 0))
+	/*
+	 * we are interested in rx_int_doorbell, txack door bell and link
+	 * change interrupts only.
+	 * we set the policy using bar23 client handle
+	 */
+	if (pdev->funcs.ntb_add_policy(
+				pdev->barinfo[NTBETH_BAR23INFO_INDEX].handle,
+				0,
+				intbits,
+				0,
+				0))
 		return (NTBETH_FAIL);
+
 	temp_value = jiffies;
-	pdev->funcs.ntb_write_scratch_pad_one(0,temp_value, pdev->barinfo[NTBETH_BAR23INFO_INDEX].handle);
-	NTBETHDEBUG( "Jiffies value written to SPAD0 0x%x\n", temp_value);
-	pdev->funcs.ntb_read_scratch_pad_one(0,&temp_value, pdev->barinfo[NTBETH_BAR23INFO_INDEX].handle);
+
+	pdev->funcs.ntb_write_scratch_pad_one(
+			0,
+			temp_value,
+			pdev->barinfo[NTBETH_BAR23INFO_INDEX].handle);
+
+	NTBETHDEBUG("Jiffies value written to SPAD0 0x%x\n", temp_value);
+
+	pdev->funcs.ntb_read_scratch_pad_one(
+			0,
+			&temp_value,
+			pdev->barinfo[NTBETH_BAR23INFO_INDEX].handle);
+
 	NTBETHDEBUG( "Jiffies value read from SPAD0 0x%x\n", temp_value);
 
 	/* set BAR45 to point to remote side secondary BAR01 */
-	/* this is required to send door bell interrupts directly to the remote side */
-	pdev->funcs.ntb_write_remote_translate(pdev->barinfo[NTBETH_BAR23INFO_INDEX].handle, NTB_BAR_45,0);
+	/* required to send door bell interrupts directly to the remote side */
+	pdev->funcs.ntb_write_remote_translate(
+			pdev->barinfo[NTBETH_BAR23INFO_INDEX].handle,
+			NTB_BAR_45,
+			0);
+
 	return NTBETH_SUCCESS;
 }
 
-int ntbdev_free_dma_memory(struct device *pdev, int size, void *virt_addr, dma_addr_t bus_address)
+int
+ntbdev_free_dma_memory(struct device *dev,
+		       int size,
+		       void *virt_addr,
+		       dma_addr_t bus_address)
 {
-	dma_free_coherent(pdev, size, virt_addr, bus_address);
+	dma_free_coherent(dev, size, virt_addr, bus_address);
 	return NTBETH_SUCCESS;
 }
 
-int ntbdev_alloc_dma_memory(struct device *pdev, void **virt_addr, int size, dma_addr_t *bus_address)
+int
+ntbdev_alloc_dma_memory(struct device *dev,
+			void **virt_addr,
+			int size,
+			dma_addr_t *bus_address)
 {
-	*virt_addr = (void *)dma_alloc_coherent(pdev, size, bus_address, GFP_KERNEL);
+	*virt_addr = (void *)dma_alloc_coherent(dev,
+						size,
+						bus_address,
+						GFP_KERNEL);
 	if (*virt_addr == NULL) {
-		NTBETHDEBUG("ntbdev_alloc_dma_memory: Failed to allocate %d bytes of memory\n", size);
-		return (NTBETH_FAIL);
-	}
-	else {
-		NTBETHDEBUG("ntbdev_alloc_dma_memory: successfully allocated %d bytes of memory\n", size);
-		return (NTBETH_SUCCESS);
-	}
-}
-
-int ntbdev_get_bus_address(struct device *pdev, void *virt_addr, int size, dma_addr_t *bus_address)
-{
-	*bus_address = dma_map_single(pdev, virt_addr, size, DMA_BIDIRECTIONAL);
-	if(*bus_address == 0) {
+		NTBETHDEBUG("ntbdev_alloc_dma_memory: Failed to allocate %d "
+			    "bytes of memory\n",
+			    size);
 		return (NTBETH_FAIL);
 	} else {
-		NTBETHDEBUG(" Bus Address 0x%Lx\n", (unsigned long long)*bus_address);
+		NTBETHDEBUG("ntbdev_alloc_dma_memory: successfully allocated "
+			    "%d bytes of memory\n",
+			    size);
 		return (NTBETH_SUCCESS);
 	}
+}
+
+int
+ntbdev_get_bus_address(struct device *dev,
+		       void *virt_addr,
+		       int size,
+		       dma_addr_t *bus_address)
+{
+	*bus_address = dma_map_single(dev, virt_addr, size, DMA_BIDIRECTIONAL);
+	if(*bus_address == 0) {
+		return (NTBETH_FAIL);
+	}
+
+	NTBETHDEBUG(" Bus Address 0x%Lx\n", (unsigned long long)*bus_address);
+	return (NTBETH_SUCCESS);
 }
 
 int ntbdev_cleanup(struct ntbeth_ntbdev *pdev)
