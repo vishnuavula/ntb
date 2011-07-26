@@ -1,56 +1,63 @@
-/*
- * This file is provided under a dual BSD/GPLv2 license.  When using or
- * redistributing this file, you may do so under either license.
- *
- * GPL LICENSE SUMMARY
- *
- * Copyright(c) 2009 Intel Corporation. All rights reserved.
- *
- * This program is free software; you can redistribute it and/or modify it
- * under the terms and conditions of the GNU General Public License,
- * version 2, as published by the Free Software Foundation.
- *
- * This program is distributed in the hope that it will be useful, but WITHOUT
- * ANY WARRANTY; without even the implied warranty of MERCHANTABILITY or
- * FITNESS FOR A PARTICULAR PURPOSE.  See the GNU General Public License for
- * more details.
- *
- * You should have received a copy of the GNU General Public License along with
- * this program; if not, write to the Free Software Foundation, Inc.,
- * 51 Franklin St - Fifth Floor, Boston, MA 02110-1301 USA.
- *
- * The full GNU General Public License is included in this distribution in
- * the file called "COPYING".
- *
- * BSD LICENSE
- *
- * Copyright(c) 2009 Intel Corporation. All rights reserved.
- *
- * Redistribution and use in source and binary forms, with or without
- * modification, are permitted provided that the following conditions are met:
- *
- *   * Redistributions of source code must retain the above copyright
- *     notice, this list of conditions and the following disclaimer.
- *   * Redistributions in binary form must reproduce the above copyright
- *     notice, this list of conditions and the following disclaimer in
- *     the documentation and/or other materials provided with the
- *     distribution.
- *   * Neither the name of Intel Corporation nor the names of its
- *     contributors may be used to endorse or promote products derived
- *     from this software without specific prior written permission.
- *
- * THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
- * AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
- * IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE
- * ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT OWNER OR CONTRIBUTORS BE
- * LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR
- * CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF
- * SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS
- * INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN
- * CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE)
- * ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE
- * POSSIBILITY OF SUCH DAMAGE.
- */
+/*****************************************************************************
+* This file is provided under a dual BSD/GPLv2 license.  When using or 
+*   redistributing this file, you may do so under either license.
+* 
+*   GPL LICENSE SUMMARY
+* 
+*   Copyright(c) 2007,2008,2009 Intel Corporation. All rights reserved.
+* 
+*   This program is free software; you can redistribute it and/or modify 
+*   it under the terms of version 2 of the GNU General Public License as
+*   published by the Free Software Foundation.
+* 
+*   This program is distributed in the hope that it will be useful, but 
+*   WITHOUT ANY WARRANTY; without even the implied warranty of 
+*   MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU 
+*   General Public License for more details.
+* 
+*   You should have received a copy of the GNU General Public License 
+*   along with this program; if not, write to the Free Software 
+*   Foundation, Inc., 51 Franklin St - Fifth Floor, Boston, MA 02110-1301 USA.
+*   The full GNU General Public License is included in this distribution 
+*   in the file called LICENSE.GPL.
+* 
+*   Contact Information:
+*   Intel Corporation
+* 
+*   BSD LICENSE 
+* 
+*   Copyright(c) 2007,2008,2009 Intel Corporation. All rights reserved.
+*   All rights reserved.
+* 
+*   Redistribution and use in source and binary forms, with or without 
+*   modification, are permitted provided that the following conditions 
+*   are met:
+* 
+*     * Redistributions of source code must retain the above copyright 
+*       notice, this list of conditions and the following disclaimer.
+*     * Redistributions in binary form must reproduce the above copyright 
+*       notice, this list of conditions and the following disclaimer in 
+*       the documentation and/or other materials provided with the 
+*       distribution.
+*     * Neither the name of Intel Corporation nor the names of its 
+*       contributors may be used to endorse or promote products derived 
+*       from this software without specific prior written permission.
+* 
+*   THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS 
+*   "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT 
+*   LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR 
+*   A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT 
+*   OWNER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, 
+*   SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT 
+*   LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, 
+*   DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY 
+*   THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT 
+*   (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE 
+*   OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+* 
+* 
+*  version: Embedded.Release.L.0.5.1-2
+******************************************************************************/
 
 /* This file defines the API exposed by the NTB Driver */
 
@@ -87,8 +94,12 @@
 #define INVALID              -1
 #define ACKNOWLEDGED         0
 
+#define NTB_RESET_POLICY     0x01
+#define NTB_ADD_POLICY       0x02
+#define NTB_GET_POLICY       0x03
+
 #define NTB_MSIX_MAX_VECTORS       4
-#define MAX_DEVICES                1
+#define MAX_DEVICES                2
 #define NUMBER_VALID_HANDLES       4
 
 #ifndef NTB_SCRATCHPAD_REGS_DEFINED
@@ -105,12 +116,12 @@ struct scratchpad_registers {
 
 /* Link Related Defines */
 #define LINK_RETRAIN       0x20
-#define LINK_ENABLE        0x02
+#define LINK_ENABLE        0x00
 #define LINK_STATUS_ACTIVE 0x2000
 
 /* Set Link Up NTBCNTL */
 enum link_t {
-	SET_LINK_DOWN = 0,
+	SET_LINK_DOWN = 0x02,
 	SET_LINK_UP   = LINK_ENABLE
 
 };
@@ -120,6 +131,7 @@ enum link_t {
 
 /**
  * enum ntb_bar_t - BAR types which are used by API for handle creation.
+ * @NTB_BAR_01: Base Address 0/1 (only available in certain functions)
  * @NTB_BAR_23: Base Address 2/3
  * @NTB_BAR_45: Base Address 4/5
  *
@@ -128,19 +140,12 @@ enum link_t {
  * passed into  functions to indicate which BAR is being requested.
  */
 enum ntb_bar_t {
+	NTB_BAR_01    = 0x00000000,
 	NTB_BAR_23    = 0x00010000,
 	NTB_BAR_45    = 0x00020000
 };
-/* Handle prefix which indicates which the associated processor */
-enum ntb_handle_prefix_t {
-	NTB_CLIENT_P0 = 0x00000001,
-	NTB_CLIENT_P1 = 0x00000002
 
-};
-enum ntb_client_list_index_t {
-	NTB_CLIENT_23 = 0x00000000,
-	NTB_CLIENT_45 = 0x00000001
-};
+
 
 /** COMMENT TBD
 **/
@@ -165,8 +170,7 @@ struct ntb_semaphore {
 /**
  * struct ntb_client_data - initial values for NTB client.
  * @limit: limit value
- * @translate_address_23: address translation value
- * @translate_address_45: address translation value
+ * @translate_address: address translation value
  * @power_event_acknowledgement_bit: bit recognized as acknowledgment
  *
  */
@@ -175,30 +179,20 @@ struct ntb_client_data {
 	uint64_t translate_address;
 };
 
-/**
- * enum ntb_proc_id_t - Processor ID.
- * @NOT_ENUMERATED: Processor's NTB not enumerated.
- * @PROC_0: Discovered NTB on Processor 0.
- * @PROC_1: Discovered NTB on Processor 1
- *
- * These enum elements are used by the internal functions to differentiate
- * between the NTB attached to PROCESSOR 0 and the NTB attached to PROCESSOR 1,
- * which are represented internally by two distinct ntb_device structures.
- * There can be at most 2 NTBs. The devices are initialized to NOT_ENUMERATED
- * before pci probe is invoked.
- */
-enum ntb_proc_id_t {
-	NOT_ENUMERATED = -1,
-	PROC_0         =  0,
-	PROC_1         =  1
-};
+
+
+#define NOT_ENUMERATED   -1
+#define ENUMERATED       1
+#define INDEX_0           0
+#define INDEX_1           1
+
+
 
 struct ntb_client {
 	ntb_client_handle_t handle;
 	ntb_callback_t callback;
 	struct ntb_client_data client_data;
-	enum ntb_proc_id_t proc_id; /*device associated with the client */
-	enum ntb_handle_prefix_t prefix;
+	uint16_t bdf;
 };
 
 
@@ -213,7 +207,7 @@ int32_t ntb_obtain_semaphore(ntb_client_handle_t handle);
  * @handle: handle granted by ntb_client_register
  *
  */
-void ntb_release_semaphore(ntb_client_handle_t handle);
+int32_t ntb_release_semaphore(ntb_client_handle_t handle);
 
 /**
  * ntb_write_scratch_pad_many - writes to 0 to 16 scratch pad registers.
@@ -243,7 +237,6 @@ ntb_client_handle_t handle);
 /**
  * ntb_write_limit - writes value of the limit.
  * @handle: handle granted by ntb_client_register
- * @bar: BAR with which the client is associated
  * @value: scratch pad register value
  *
  * Base address is added to this value to arrive at the upper bound
@@ -263,14 +256,14 @@ int32_t ntb_write_limit(ntb_client_handle_t handle, uint64_t value);
 uint64_t ntb_read_limit(ntb_client_handle_t handle);
 
 /**
- * ntb_write_translate_address_value - writes translation address value.
+ * ntb_write_translate - writes translation address value.
  * @handle: handle granted by ntb_client_register
  * @address: physical address value for the translation address
  *
  * Base address is added to this value to arrive at the upper bound
  * address of a memory window.
  */
-int32_t ntb_write_translate_address_value(ntb_client_handle_t handle,
+int32_t ntb_write_translate(ntb_client_handle_t handle,
 uint64_t address);
 
 /**
@@ -282,7 +275,6 @@ uint64_t address);
 int32_t ntb_write_doorbell(ntb_client_handle_t handle,
 uint16_t value
 );
-
 
 /**
  * ntb_read_scratch_pad_many - reads multiple scratch pad registers.
@@ -311,7 +303,7 @@ ntb_client_handle_t handle
  * ntb_register_client - registers a client driver with the NTB.
  * @bar: BAR(s) requested
  * @callback: pointer to a callback function of type ntb_callback_t
- * @processor_id: processor ID (0 or 1). On uni-proc systems 0
+ * @bdf: bus,device, function (bus, 8 bits, device, 5 bits, function, 3 bits)
  * @client_data: sets limit register and translation addresses
  *
  * Returns a valid handle. If the BAR(s) requested are already taken,
@@ -319,7 +311,7 @@ ntb_client_handle_t handle
  */
 ntb_client_handle_t ntb_register_client(enum ntb_bar_t bar,
 ntb_callback_t callback,
-enum ntb_proc_id_t processor_id,
+uint16_t bdf,
 struct ntb_client_data *client_data
 );
 
@@ -346,25 +338,9 @@ uint32_t value);
 uint32_t ntb_get_number_devices(void);
 
 /**
- * ntb_set_heartbeat - set heart beat ownership.
- * @handle: handle granted by ntb_client_register
- *
- * Owner will be "called back" by the NTB driver.
- */
-int32_t ntb_set_heartbeat(ntb_client_handle_t handle);
-/**
- * ntb_release_heartbeat - releases heartbeat ownership.
- * @handle: handle granted by ntb_client_register
- *
- * Owner will be "called back" by the NTB driver.
- */
-int32_t ntb_release_heartbeat(ntb_client_handle_t handle);
-
-/**
  * ntb_get_link_status - returns the link status.
  * @handle: handle granted by ntb_client_register
  *
- * Owner will be "called back" by the NTB driver.
  */
 int16_t ntb_get_link_status(ntb_client_handle_t handle);
 
@@ -386,25 +362,170 @@ uint64_t ntb_get_bar_address(ntb_client_handle_t handle,
 enum ntb_bar_t bar);
 
 /**
- * ntb_set_policy - allows one client to set the policy for the rest.
- * @handle: handle granted by ntb_client_register
- * @heartbeat_bit: bit for heart beat policy
- * @bits_23: bits for BAR 2/3 policy
- * @bits_45: bits for BAR 4/5 policy
- * @power_event_bit: bits for PM policy (see documentation)
- * @power_notification_bit: bits for PM policy (see documentation)
- *
- */
-int32_t ntb_set_policy(ntb_client_handle_t handle,
-uint16_t heartbeat_bit, uint16_t bits_23, uint16_t bits_45,
-uint16_t power_event_bit,
-uint16_t power_notification_bit);
-
-/**
  * ntb_client_suspend - allows client to signal NTB it is ready to suspend.
  * @handle: handle granted by ntb_client_register.
  */
 int32_t ntb_client_suspend(ntb_client_handle_t handle);
+
+/* NEW APIS*/
+
+/**
+ * ntb_add_policy - adds a new doorbell policy.
+ * @handle: handle granted by ntb_client_register
+ * @heartbeat_bit: which bits will be used for heartbeat messages
+ * @bar_bits: which bits will be used for the client's other protocol messages
+ * @power_event_bit: PM policy, other side of NTB must ready itself for PM event
+ * @power_notification_bit: PM policy, acknowledgement of PM even
+ *
+ * The use of doorbell bits is referred to as the 'policy'
+ * of the doorbell. Each client can add policy by using the
+ * the function parameters to indicate specific bits.
+ */
+int32_t ntb_add_policy(ntb_client_handle_t handle,
+uint16_t heartbeat_bit, uint16_t bar_bits,
+uint16_t power_event_bit,
+uint16_t power_notification_bit);
+
+/**
+ * ntb_reset_policy - resets the doorbell policy for a particular client.
+ * @handle: handle granted by ntb_client_register
+ *
+ * The use of doorbell bits is referred to as the 'policy'
+ * of the doorbell. Each client can add policy by using the
+ * the function parameters to indicate specific bits.
+ */
+int32_t ntb_reset_policy(ntb_client_handle_t handle);
+
+/**
+ * ntb_get_policy - returns the policy, indicating which bits are already set.
+ * @handle: handle granted by ntb_client_register
+ *
+ * The use of doorbell bits is referred to as the 'policy'
+ * of the doorbell. Each client can add policy by using the
+ * the function parameters to indicate specific bits.
+ */
+uint16_t ntb_get_policy(ntb_client_handle_t handle);
+
+/**
+ * ntb_get_next_bdf - returns next available BDF/BAR combination.
+ * @next_bdf: ptr to store next available BDF
+ * @next_bar: ptr to next BAR associated with BDF
+ *
+ * Use this function within a loop. The parameter cmd should contain
+ * a value of zero for the first iteration and a value of non-zero
+ * for subsequent iterations.
+ *
+ * The loop should be stopped when a value of 0 is returned in
+ * next_bar, as a value of 0 is not a BAR available for clients.
+ *
+ *
+ */
+int32_t ntb_get_next_bdf(uint16_t *next_bdf,
+uint32_t *next_bar);
+/**
+ * ntb_get_number_unused_bdfs - number of BDF/BAR combinations available.
+ *
+ */
+int32_t ntb_get_number_unused_bdfs(void);
+
+/**
+ * ntb_write_wccntrl_bit - writes to wccntrl register.
+ * @handle: handle granted by ntb_client_register
+ *
+ * Only bit one can be set in this register (bit 0).
+ */
+int32_t ntb_write_wccntrl_bit(ntb_client_handle_t handle);
+
+/**
+ * ntb_read_wccntrl_bit - returns wnctrl register value.
+ * @handle: handle granted by ntb_client_register
+ *
+ */
+uint32_t ntb_read_wccntrl_bit(ntb_client_handle_t handle);
+
+/**
+ * ntb_write_remote_translate - sets secondary translate register.
+ * @handle: handle granted by ntb_client_register
+ * @bar: the secondary translate to write
+ * @address: address for secondary translate
+ *
+ */
+int32_t ntb_write_remote_translate(ntb_client_handle_t handle,
+enum ntb_bar_t bar,
+uint64_t address);
+
+/**
+ * ntb_read_remote_translate - returns translate (primnary) value.
+ * @handle: handle granted by ntb_client_register
+ * @bar: the secondary translate to read.
+ */
+
+int64_t ntb_read_remote_translate(ntb_client_handle_t handle,
+enum ntb_bar_t bar);
+
+/*
+ * ASSUMPTION: These APIs are being used from the primary side
+ * of the NTB classic and B2B drivers. These are not root port
+ * side APIs.
+ *
+ */
+
+/**
+ * ntb_write_remote_doorbell_mask - sets secondary side's mask values.
+ * @handle: handle granted by ntb_client_register
+ * @mask: parameter for mask bits
+ *
+ */
+int32_t ntb_write_remote_doorbell_mask(ntb_client_handle_t handle,
+uint32_t mask);
+
+/**
+ * ntb_read_remote_doorbell_mask - returns secondary side's mask values.
+ * @handle: handle granted by ntb_client_register
+ *
+ */
+uint16_t ntb_read_remote_doorbell_mask(ntb_client_handle_t handle);
+
+/**
+ * ntb_write_remote_limit - sets secondary limit register.
+ * @handle: handle granted by ntb_client_register
+ * @bar: the secondary limit being requested
+ * @value: value for secondary limit
+ *
+ */
+int32_t ntb_write_remote_limit(ntb_client_handle_t handle,
+enum ntb_bar_t bar,
+uint64_t value);
+
+/**
+ * ntb_read_remote_limit - returns secondary limit register value.
+ * @handle: handle granted by ntb_client_register
+ * @bar: the secondary limit being read.
+ */
+int64_t ntb_read_remote_limit(ntb_client_handle_t handle,
+enum ntb_bar_t bar);
+
+/**
+ * ntb_read_remote_bar - reads base address register.
+ * @handle: handle granted by ntb_client_register
+ * @bar: BAR to write
+ *
+ * Used from the primary side.
+ */
+uint64_t ntb_read_remote_bar(ntb_client_handle_t handle, enum ntb_bar_t bar);
+
+/**
+ * ntb_write_remote_bar- writes base address register.
+ * @handle: handle granted by ntb_client_register
+ * @bar: BAR to write
+ * @address: address value
+ *
+ * Used from the primary side.
+ */
+int32_t ntb_write_remote_bar(ntb_client_handle_t handle, enum ntb_bar_t bar,
+uint64_t address);
+
+
 /*****************************************************************************
  *@ingroup NTB_CLIENT_API
  *Structure to hold functions exported to the client driver.
@@ -414,7 +535,7 @@ struct ntb_api_export {
 
 	ntb_client_handle_t (*ntb_register_client)(enum ntb_bar_t bar,
 	ntb_callback_t callback,
-	enum ntb_proc_id_t processor_id,
+	uint16_t bdf,
 	struct ntb_client_data *client_data);
 
 	int32_t (*ntb_unregister_client)(ntb_client_handle_t handle);
@@ -438,7 +559,7 @@ struct ntb_api_export {
 	int32_t (*ntb_read_scratch_pad_one)(uint32_t index, uint32_t *value,
 	ntb_client_handle_t handle);
 
-	int32_t (*ntb_write_translate_address_value)(
+	int32_t (*ntb_write_translate)(
 	ntb_client_handle_t handle,
 	uint64_t address);
 
@@ -447,21 +568,12 @@ struct ntb_api_export {
 
 	int32_t (*ntb_obtain_semaphore)(ntb_client_handle_t handle);
 
-	void (*ntb_release_semaphore)(ntb_client_handle_t handle);
+	int32_t(*ntb_release_semaphore)(ntb_client_handle_t handle);
 
 	int32_t (*ntb_set_snoop_level)(ntb_client_handle_t handle,
 	uint32_t value);
 
 	uint32_t (*ntb_get_number_devices)(void);
-
-	int32_t (*ntb_set_policy)(ntb_client_handle_t handle,
-	uint16_t heartbeat_bit, uint16_t bits_23, uint16_t bits_45,
-	uint16_t power_event_bit,
-	uint16_t power_notification_bit);
-
-	int32_t (*ntb_set_heartbeat)(ntb_client_handle_t handle);
-
-	int32_t (*ntb_release_heartbeat)(ntb_client_handle_t handle);
 
 	int16_t (*ntb_get_link_status)(int32_t handle);
 
@@ -471,7 +583,32 @@ struct ntb_api_export {
 	enum ntb_bar_t bar);
 
 	int32_t (*ntb_client_suspend)(ntb_client_handle_t handle);
-	struct ntb_device * (*ntb_get_device)(enum ntb_proc_id_t processor_id);
+
+	int32_t (*ntb_add_policy)(ntb_client_handle_t handle,
+	uint16_t heartbeat_bit, uint16_t bar_bits,
+	uint16_t power_event_bit,
+	uint16_t power_notification_bit);
+
+	int32_t (*ntb_reset_policy)(ntb_client_handle_t handle);
+
+	uint16_t (*ntb_get_policy)(ntb_client_handle_t handle);
+
+	int32_t (*ntb_get_next_bdf)(uint16_t *next_bdf,
+	uint32_t *next_bar);
+
+	int32_t (*ntb_get_number_unused_bdfs)(void);
+
+	int32_t (*ntb_write_wccntrl_bit)(ntb_client_handle_t handle);
+
+	uint32_t (*ntb_read_wccntrl_bit)(ntb_client_handle_t handle);
+
+	int32_t (*ntb_write_remote_translate)(
+	ntb_client_handle_t handle,
+	enum ntb_bar_t bar,
+	uint64_t address);
+
+	int64_t (*ntb_read_remote_translate)(ntb_client_handle_t handle,
+	enum ntb_bar_t bar);
 
 };
 
@@ -479,5 +616,9 @@ int32_t ntb_get_api(struct ntb_api_export *api);
 
 
 typedef int32_t (*ntb_get_api_t)(struct ntb_api_export *);
+
+
+
+
 
 #endif /* NTB_API_H */

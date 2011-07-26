@@ -52,8 +52,7 @@
  * POSSIBILITY OF SUCH DAMAGE.
  */
 
-/* This program implements network driver over NTB hardware.*/
-
+/* This file implements network driver over NTB PCIE-LINK */
 #ifndef NTBNET_H
 #define NTBNET_H
 
@@ -82,29 +81,25 @@
 struct ntbeth_priv
 {
 	struct net_device_stats stats;
-        struct ntbeth_copier_info copier;
-        struct ntbeth_ntbdev ntbdev;
+	struct ntbeth_copier_info copier;
+	struct ntbeth_ntbdev ntbdev;
 	int status;
 	spinlock_t lock;
-//	int put;
-//	int get;
-        struct net_device *netdev;
-        struct cq *rxcq; // reside locally
-        struct cq *txcq; // reside locally but packet store is remote 
-        int peer_status; 
-        int local_drv_if_status;
-        int remote_drv_if_status;
-        int txq_status;
-        int rx_pkt_count;
-        int tx_pkt_count;
-       // int tx_packet_sent_count;
-      //  int tx_packet_ack_sent_count;
-       // int tx_packet_rcvd_count;
-        //int tx_packet_ack_rcvd_count;
-        int tx_timeout_count;
-        int rx_dropped;
-        dma_addr_t *rx_dma_addresses;
-        dma_addr_t *tx_dma_addresses;
+	struct net_device *netdev;
+	struct cq *rxcq; // reside locally
+	struct cq *txcq; // reside locally but packet store is remote
+	int peer_status;
+	int local_drv_if_status;
+	int remote_drv_if_status;
+	int txq_status;
+	int rx_pkt_count;
+	int tx_pkt_count;
+	int tx_timeout_count;
+	int rx_dropped;
+	dma_addr_t *rx_dma_addresses;
+	dma_addr_t *tx_dma_addresses;
+	int tx_pending_pkts;
+	struct timer_list perf_tmr;
 };
 
 int ntbeth_open(struct net_device *dev);
@@ -127,4 +122,4 @@ void update_peer_status(struct net_device *netdev, int peer_status);
 void dump_info(struct ntbeth_priv *priv, int side, void *pkt, int len);
 struct net_device_stats *ntbeth_stats(struct net_device *dev);
 
-#endif 
+#endif

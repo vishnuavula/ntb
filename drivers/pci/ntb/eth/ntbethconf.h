@@ -52,14 +52,13 @@
  * POSSIBILITY OF SUCH DAMAGE.
  */
 
-/* This program implements network driver over NTB hardware.*/
-
+/* This file implements network driver over NTB PCIE-LINK */
 #ifndef NTBETHCONF_H
 #define NTBETHCONF_H
 
 //enable/disable debug logs
 //#define NTBETHDEBUG(fmt, args...) printk(KERN_INFO "ntbeth: " fmt, ## args)
-#define NTBETHDEBUG(fmt, args...) ;/* not debugging: nothing */
+#define NTBETHDEBUG(fmt, args...) /* not debugging: nothing */
 
 #define NTBETH_MAC              "\0NTBE0"
 #define NTBETH_MAX_MTUSIZE     1500
@@ -69,6 +68,7 @@
 #define NTBETH_SUCCESS 0
 #define NTBETH_FAIL 1
 
-#define NTBETH_VERSION     "3.0"
+#define NTBETH_VERSION     "3.2"
+#define NTBETH_MAX_PEND_PKTS 10
 
-#endif 
+#endif
