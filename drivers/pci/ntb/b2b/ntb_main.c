@@ -1,11 +1,10 @@
 /*****************************************************************************
- * %LICENSE_DUAL%
  * This file is provided under a dual BSD/GPLv2 license.  When using or 
  *   redistributing this file, you may do so under either license.
  * 
  *   GPL LICENSE SUMMARY
  * 
- *   Copyright(c) 2007,2008,2009 Intel Corporation. All rights reserved.
+ *   Copyright(c) 2007,2008,2009,2010 Intel Corporation. All rights reserved.
  * 
  *   This program is free software; you can redistribute it and/or modify 
  *   it under the terms of version 2 of the GNU General Public License as
@@ -27,7 +26,7 @@
  * 
  *   BSD LICENSE 
  * 
- *   Copyright(c) 2007,2008,2009 Intel Corporation. All rights reserved.
+ *   Copyright(c) 2007,2008,2009, 2010 Intel Corporation. All rights reserved.
  *   All rights reserved.
  * 
  *   Redistribution and use in source and binary forms, with or without 
@@ -57,7 +56,7 @@
  *   OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  * 
  * 
- *  version: Embedded.Release.L.0.5.1-2
+ *  version: Embedded.Release.L.1.0.0-401
  *****************************************************************************/
 
 
@@ -73,11 +72,12 @@ uint16_t bdf, uint32_t device_index);
 static int32_t ntb_probe(struct pci_dev *dev, const struct pci_device_id *id);
 static void ntb_remove(struct pci_dev *dev);
 
+/*
 #ifdef RH_5
 static irqreturn_t ntb_irq_xxx(int irq, void *data, struct pt_regs *regs);
 #else
 static irqreturn_t ntb_irq_xxx(int irq, void *data);
-#endif
+#endif */
 static void callback_tasklet_func(unsigned long data);
 static int32_t ntb_set_interrupts(struct ntb_device *device);
 static void ntb_release_interrupts(struct ntb_device *device);
@@ -132,8 +132,13 @@ static struct ntb_api_export ntb_api = {
 	.ntb_write_wccntrl_bit             = ntb_write_wccntrl_bit,
 	.ntb_read_wccntrl_bit              = ntb_read_wccntrl_bit,
 	.ntb_write_remote_translate        = ntb_write_remote_translate,
-	.ntb_read_remote_translate         = ntb_read_remote_translate
-
+	.ntb_read_remote_translate         = ntb_read_remote_translate,
+	.ntb_write_remote_doorbell_mask    = ntb_write_remote_doorbell_mask,
+	.ntb_read_remote_doorbell_mask     = ntb_read_remote_doorbell_mask,
+	.ntb_write_remote_limit            = ntb_write_remote_limit,
+	.ntb_read_remote_limit             = ntb_read_remote_limit,
+	.ntb_write_remote_bar              = ntb_write_remote_bar,
+	.ntb_read_remote_bar               = ntb_read_remote_bar
 };
 
 static spinlock_t lock_pm_event_check;   /*  lock for pm acknowledgment */
@@ -141,7 +146,6 @@ static spinlock_t lock_callback_tasklet; /* lock for door bell tasklet work */
 static int16_t g_tasklet_data[MAX_DEVICES];
 DECLARE_TASKLET(callback_tasklet, callback_tasklet_func,
 (unsigned long) &g_tasklet_data);
-
 int icounter = 1;
 
 static char *g_ntb_name = "NTBB2B";
@@ -161,17 +165,19 @@ static int ntb_init(void)
 	/*Initialization Phase */
 	int32_t ret = SUCCESS;
 	int32_t i = 0;
+	int32_t err = 0;
 	struct ntb_device *device_proc = NULL;
 	ntb_initialize_number_devices();
 
-	NTB_DEBUG_PRINT(("NTB: Entering Init\n"));
+	NTB_DEBUG_PRINT(("%s Entering ntb_init\n", PREFIX_STRING));
 
 	for (i = 0;  i < MAX_DEVICES; i++) {
 
 		device_proc = ntb_get_device(i);
 		if (device_proc == NULL) {
 			NTB_DEBUG_PRINT(
-			("NTB: Unable to retrieve NTB devices \n"));
+			("%s UNABLE TO RETRIEVE NTB_DEVICE STRUCT\n",
+			PREFIX_STRING));
 			return -EPERM;
 		}
 
@@ -179,13 +185,14 @@ static int ntb_init(void)
 		g_tasklet_data[i] = 0;
 
 	}
-
-	if (pci_register_driver(&ntb_pci_ops) < 0) {
-		NTB_DEBUG_PRINT(("NTB: Error on PCI Registration \n"));
+	err = pci_register_driver(&ntb_pci_ops);
+	if (err < 0) {
+		NTB_DEBUG_PRINT(("%s ERROR ON PCI REGISTRATION: %x\n",
+		PREFIX_STRING, err));
 		return -EPERM;
 	}
 
-
+	NTB_DEBUG_PRINT(("%s Exiting ntb_init\n", PREFIX_STRING));
 	return ret;
 
 }
@@ -207,9 +214,11 @@ static void ntb_exit(void)
 	device_proc0 = ntb_get_device(INDEX_0);
 	device_proc1 = ntb_get_device(INDEX_1);
 
-	NTB_DEBUG_PRINT(("NTB: Entering ntb_exit \n"));
+	NTB_DEBUG_PRINT(("%s Entering ntb_exit \n", PREFIX_STRING));
 
 	pci_unregister_driver(&ntb_pci_ops);
+
+	NTB_DEBUG_PRINT(("%s Exiting ntb_exit \n", PREFIX_STRING));
 
 }
 
@@ -242,11 +251,9 @@ uint16_t bdf, uint32_t device_index)
 	device->link_control_offset     = NTB_CNTL_OFFSET;
 	device->semaphore_offset        = NTB_SCRATCHPAD_SEM4_OFFSET;
 
-	device->link_status_offset      = NTB_LINK_STATUS_OFFSET;
+	device->link_status_offset      = NTB_LINK_STATUS_OFFSET_PRI;
 
 	for (i = 0; i < NO_CLIENTS; i++) {
-		NTB_DEBUG_PRINT(
-		("NTB: Client List %p\n", &device->client_list));
 		device->client_list.clients[i].handle = NTB_UNUSED;
 		device->client_list.clients[i].callback = NULL;
 		device->client_list.clients[i].bdf = bdf;
@@ -281,12 +288,11 @@ static int32_t ntb_probe(struct pci_dev *dev, const struct pci_device_id *id)
 	uint32_t memory_lcfgbus = 0xc804011c;
 	uint32_t *virtual_lcfgbus = NULL; */
 
-	NTB_DEBUG_PRINT(("NTB: PROBE FOUND DEVICE ID BUS %x DEVFN %x\n",
+	NTB_DEBUG_PRINT(("%s Entering ntb_probe\n", PREFIX_STRING));
+	NTB_DEBUG_PRINT(("%s Bus no %x devfn %x\n", PREFIX_STRING,
 	dev->bus->number, dev->devfn));
-
 	bdf = ntb_get_bdf(dev->bus->number, dev->devfn);
-
-	NTB_DEBUG_PRINT(("NTB: PROBE FOUND DEVICE ID BDF %x\n",
+	NTB_DEBUG_PRINT(("%s Resulting BDF %x\n", PREFIX_STRING,
 	bdf));
 
 	device = ntb_get_device(number_devices);
@@ -307,7 +313,6 @@ static int32_t ntb_probe(struct pci_dev *dev, const struct pci_device_id *id)
 	device->dev = dev;
 	ntb_device_init(device, bdf, number_devices);
 
-	NTB_DEBUG_PRINT(("NTB: SUCCESSFUL NTB LOAD\n"));
 	if (pci_enable_device(dev))
 		return -ENODEV;
 
@@ -318,7 +323,7 @@ static int32_t ntb_probe(struct pci_dev *dev, const struct pci_device_id *id)
 
 	if (ntb_get_bar_addresses(device) != 0) {
 		NTB_DEBUG_PRINT(
-		("NTB: BAR ACCESS FAILURE IN PROBE PROC %x\n",
+		("%s BAR ACCESS FAILURE IN PROBE PROC %x\n", PREFIX_STRING,
 		device->device_state));
 		return -EPERM;
 	}
@@ -331,17 +336,17 @@ static int32_t ntb_probe(struct pci_dev *dev, const struct pci_device_id *id)
 	doorbell = ntb_lib_read_16(device->mm_regs,
 	NTB_PDOORBELL_OFFSET);
 
-	NTB_DEBUG_PRINT(("NTB: Doorbell %i \n", doorbell));
+	NTB_DEBUG_PRINT(("%s Doorbell value = %i \n", PREFIX_STRING, doorbell));
 
 	ntb_lib_write_16(device->mm_regs, NTB_PDOORBELL_OFFSET,
 	doorbell);
 
-	NTB_DEBUG_PRINT(("NTB: Clear Doorbell \n"));
+	NTB_DEBUG_PRINT(("%s Clearing Doorbell \n", PREFIX_STRING));
 
 	attempt = ntb_set_interrupts(device);
 	if (attempt != 0) {
 		NTB_DEBUG_PRINT(
-		("NTB: INTERRUPT ALLOCATION FAILURE IN PROBE\n"));
+		("%s INTERRUPT ALLOCATION FAILURE IN PROBE\n", PREFIX_STRING));
 		return -EPERM;
 	}
 
@@ -356,26 +361,26 @@ static int32_t ntb_probe(struct pci_dev *dev, const struct pci_device_id *id)
 
 	ntb_increment_number_devices();
 
-	NTB_DEBUG_PRINT(("NTB: DEV PTR %p\n", dev));
+	NTB_DEBUG_PRINT(("%s dev ptr %p\n", PREFIX_STRING, dev));
 	if (pci_enable_device(dev)) {
 		NTB_DEBUG_PRINT(
-		("NTB: UNABLE TO ENABLE DEVICE!\n"));
+		("%s UNABLE TO ENABLE DEVICE!\n", PREFIX_STRING));
 		return -ENODEV;
 	}
 
 	ntb_get_limit_settings(dev, NTB_BAR_23, device, PRIMARY_CONFIG);
 	ntb_get_limit_settings(dev, NTB_BAR_45, device, PRIMARY_CONFIG);
-	ntb_write_limit_settings_to_scratchpad(device);
 
-	NTB_DEBUG_PRINT(("NTB: LIMIT BASE %Lx\n", device->limit_base_23));
-	NTB_DEBUG_PRINT(("NTB: LIMIT MAX %Lx\n", device->limit_max_23));
-	NTB_DEBUG_PRINT(("NTB: DEVICE PTR %p\n", device));
-	NTB_DEBUG_PRINT(("NTB: DEV PTR %p\n", dev));
-	NTB_DEBUG_PRINT(("NTB: DEV PROC ID %x\n", device->device_id));
-	NTB_DEBUG_PRINT(("NTB: SUCCESSFUL NTB LOAD\n"));
+	NTB_DEBUG_PRINT(("%s limit base %Lx\n",
+	PREFIX_STRING, device->limit_base_23));
+	NTB_DEBUG_PRINT(("%s limit max %Lx\n", PREFIX_STRING,
+	device->limit_max_23));
+
 
 
 	pci_set_drvdata(dev, device);
+	NTB_DEBUG_PRINT(("%s SUCCESSFUL LOAD\n", PREFIX_STRING));
+	NTB_DEBUG_PRINT(("%s Exiting ntb_probe,\n", PREFIX_STRING));
 
 	return 0;
 
@@ -395,24 +400,20 @@ static void ntb_remove(struct pci_dev *dev)
 	struct ntb_device *device = NULL;
 
 	device = (struct ntb_device *)pci_get_drvdata(dev);
+	NTB_DEBUG_PRINT(("%s Entering ntb_remove\n", PREFIX_STRING));
 
-	NTB_DEBUG_PRINT(("NTB: REMOVE BDFs x"));
 	if (device != NULL) {
-		NTB_DEBUG_PRINT(("NTB: DEVICE %p\n", device));
-			NTB_DEBUG_PRINT(("NTB: STATE %x\n",
-			device->device_state));
-			NTB_DEBUG_PRINT(("NTB: INT %x\n",
-			device->intx_entry_no));
-		NTB_DEBUG_PRINT(("NTB: DEV %p\n", device->dev));
-
+		NTB_DEBUG_PRINT(("%s Remove device with BDF %x", PREFIX_STRING,
+		device->bdf));
 		ntb_release_interrupts(device);
 		ntb_release_bar_addresses(device);
 	} else {
 		NTB_DEBUG_PRINT(
-		("NTB: DEVICE == NULL IN NTB_REMOVE\n"));
+		("%s DEVICE == NULL IN NTB_REMOVE\n", PREFIX_STRING));
 	}
 
 	pci_disable_device(dev);
+	NTB_DEBUG_PRINT(("%s Exiting ntb_remove\n", PREFIX_STRING));
 }
 /*****************************************************************************
  * Description
@@ -422,11 +423,7 @@ static void ntb_remove(struct pci_dev *dev)
  * Assumptions:
  * Return Values: IRQ_HANDLED successful, IRQ_NONE unsuccessful
  ****************************************************************************/
-#ifdef RH_5
-static irqreturn_t ntb_irq_xxx(int irq, void *data, struct pt_regs *regs)
-#else
-static irqreturn_t ntb_irq_xxx(int irq, void *data)
-#endif
+NTB_IRQ_HANDLER
 {
 	uint32_t tag = 0;
 	struct ntb_device *device = NULL;
@@ -436,19 +433,15 @@ static irqreturn_t ntb_irq_xxx(int irq, void *data)
 
 	/* The ntb_device signature
 	 * must be at the top of the structure. */
-	NTB_DEBUG_PRINT(("NTB: IRQ \n"));
+	NTB_DEBUG_PRINT(("%s Entering ntb_irq_handler  \n", PREFIX_STRING));
 
-	/* DEBUG
-	icounter++;
-	outb(icounter, 0x80);
-	if(icounter == 9)
-		icounter = 0;
-	*/
 
 	if (data != NULL) {
 		outb(0x0A, 0x80);
 		tag = *((int32_t *)data);
-		NTB_DEBUG_PRINT(("NTB: ID %x \n", tag));
+		NTB_DEBUG_PRINT(("%s IRQ Passed in ID Tag = %x \n",
+		PREFIX_STRING,
+		tag));
 		if (tag >= NTB_IDENTIFIER &&
 		tag <= NTB_IDENTIFIER + MAX_DEVICES)
 			device = data;
@@ -458,9 +451,9 @@ static irqreturn_t ntb_irq_xxx(int irq, void *data)
 		/* Get the doorbell register */
 		doorbell = ntb_lib_read_16(device->mm_regs,
 		NTB_PDOORBELL_OFFSET);
-		NTB_DEBUG_PRINT(("NTB:In Interrupts Doorbell %x \n",
+		NTB_DEBUG_PRINT(("%s Doorbell = %x \n", PREFIX_STRING,
 		doorbell));
-		NTB_DEBUG_PRINT(("NTB: device->device_tag %x \n",
+		NTB_DEBUG_PRINT(("%s device->device_tag = %x \n", PREFIX_STRING,
 		device->device_tag));
 
 		outb(0x0B, 0x80);
@@ -477,6 +470,7 @@ static irqreturn_t ntb_irq_xxx(int irq, void *data)
 	}
 
 	outb(0x0D, 0x80);
+	NTB_DEBUG_PRINT(("%s Exiting ntb_irq_handler \n", PREFIX_STRING));
 	return handled;
 }
 
@@ -490,8 +484,7 @@ static irqreturn_t ntb_irq_xxx(int irq, void *data)
  ****************************************************************************/
 static void callback_tasklet_func(unsigned long data)
 {
-	uint32_t offset = 0;
-	unsigned long flags;
+	unsigned long flags, offset = 0;
 	struct scratchpad_registers pad;
 	int32_t i = 0;
 	int32_t k = 0;
@@ -504,7 +497,8 @@ static void callback_tasklet_func(unsigned long data)
 	uint16_t callback_event_23 = 0;
 	uint16_t callback_event_45 = 0;
 
-	NTB_DEBUG_PRINT(("NTB: callback_tasklet_func \n"));
+	NTB_DEBUG_PRINT(("%s Entering callback_tasklet_func \n",
+	PREFIX_STRING));
 
 	/* SPINLOCK NOTE: Sharing this data with the interrupt handler above.
 	 * To prevent a HW interrupt from happening while it is being copied,
@@ -539,9 +533,11 @@ static void callback_tasklet_func(unsigned long data)
 		callback23 = client_list->clients[NTB_CLIENT_23].callback;
 		callback45 = client_list->clients[NTB_CLIENT_45].callback;
 		if (callback23 == NULL)
-			NTB_DEBUG_PRINT(("NTB: Callback 23 == NULL \n"));
+			NTB_DEBUG_PRINT(("%s Callback 23 == NULL \n",
+			PREFIX_STRING));
 		if (callback45 == NULL)
-			NTB_DEBUG_PRINT(("NTB: Callback 45 == NULL \n"));
+			NTB_DEBUG_PRINT(("%s Callback 45 == NULL \n",
+			PREFIX_STRING));
 
 
 		offset = device->scratchpad_offset_read;
@@ -549,12 +545,11 @@ static void callback_tasklet_func(unsigned long data)
 				NTB_TOTAL_SCRATCHPAD_NO);
 
 
-		NTB_DEBUG_PRINT(("NTB: Client List %p \n", client_list));
-		NTB_DEBUG_PRINT(("NTB: Before doorbell check \n"));
-		NTB_DEBUG_PRINT(("NTB: DOORBELL %x\n", doorbell_array[i]));
+		NTB_DEBUG_PRINT(("%s doorbell =  %x\n", PREFIX_STRING,
+		doorbell_array[i]));
 		for (k = 0; k < NTB_TOTAL_SCRATCHPAD_NO; k++)
-			NTB_DEBUG_PRINT(("NTB: SPAD REG %x %x\n",
-			k, pad.registers[k]));
+			NTB_DEBUG_PRINT(("%s scratchpad reg %x =  %x\n",
+			PREFIX_STRING, k, pad.registers[k]));
 
 
 		if ((doorbell_array[i] & device->policy_bits_23))
@@ -566,7 +561,7 @@ static void callback_tasklet_func(unsigned long data)
 
 
 
-		NTB_DEBUG_PRINT(("NTB: Before link check \n"));
+		NTB_DEBUG_PRINT(("%s Before link check \n", PREFIX_STRING));
 		if (doorbell_array[i] & NTB_LINK_STATUS_CHANGE) {
 			if (device->link_status == LINK_UP)
 				device->link_status = LINK_DOWN;
@@ -596,7 +591,8 @@ static void callback_tasklet_func(unsigned long data)
 
 	}
 
-	NTB_DEBUG_PRINT(("NTB: END TASKLET \n"));
+	NTB_DEBUG_PRINT(("%s Exiting callback_tasklet_func \n",
+	PREFIX_STRING));
 }
 
 /*****************************************************************************
@@ -624,8 +620,10 @@ static int32_t ntb_set_interrupts(struct ntb_device *device)
 	if (msix_entries > NTB_MSIX_MAX_VECTORS)
 		return EPERM;
 
-	NTB_DEBUG_PRINT(("NTB: Entering ntb_setup_interrupts \n"));
-	NTB_DEBUG_PRINT(("NTB: MSIX Vector Count %x \n", msix_entries));
+	NTB_DEBUG_PRINT(("%s Entering ntb_setup_interrupts \n",
+	PREFIX_STRING));
+	NTB_DEBUG_PRINT(("%s MSIX Vector Count %x \n", PREFIX_STRING,
+	msix_entries));
 
 	for (i = 0; i < msix_entries; i++)
 		device->msix_entries[i].entry = i;
@@ -647,7 +645,7 @@ static int32_t ntb_set_interrupts(struct ntb_device *device)
 			NTB_MSIX_NAME, device);
 			if (enable_attempt != 0) {
 				NTB_DEBUG_PRINT(
-				("NTB: MSIX setup failed\n"));
+				("%s MSIX SETUP FAILED\n", PREFIX_STRING));
 				pci_disable_msix(device->dev);
 				attempts = i;
 				for (k = 0; k < attempts; k++)
@@ -657,7 +655,8 @@ static int32_t ntb_set_interrupts(struct ntb_device *device)
 				return -EPERM;
 			}
 			NTB_DEBUG_PRINT(
-				("NTB: MSIX INT %i setup successful\n", i));
+			("%s MSIX INT %i setup successful\n",
+			PREFIX_STRING, i));
 			device->msix_entry_no = msix_entries;
 		}
 
@@ -666,19 +665,20 @@ static int32_t ntb_set_interrupts(struct ntb_device *device)
 		pci_read_config_dword(device->dev, NTB_MSI_OFFSET,
 		&msi_value);
 
-		NTB_DEBUG_PRINT(("NTB: pci_enable_msi passed\n"));
+		NTB_DEBUG_PRINT(("%s pci_enable_msi passed\n", PREFIX_STRING));
 		enable_attempt = request_irq(device->dev->irq,
 		&ntb_irq_xxx,
 		IRQF_SHARED,
 		NTB_MSIX_NAME, device);
 
 		if (enable_attempt != 0) {
-			NTB_DEBUG_PRINT(("NTB: MSI setup failed\n"));
+			NTB_DEBUG_PRINT(("%s MSI SETUP FAILED\n",
+			PREFIX_STRING));
 			pci_disable_msi(device->dev);
 			return -EPERM;
 		}
-		device->msi_entry_no = 1;
-		NTB_DEBUG_PRINT(("NTB: MSI setup successful\n"));
+		device->msi_entry_no = NTB_INTERRUPTS_ENABLED;
+		NTB_DEBUG_PRINT(("%s MSI setup successful\n", PREFIX_STRING));
 	} else {
 		enable_attempt = request_irq(device->dev->irq,
 		&ntb_irq_xxx,
@@ -686,18 +686,20 @@ static int32_t ntb_set_interrupts(struct ntb_device *device)
 		NTB_MSIX_NAME, device);
 
 		if (enable_attempt != 0) {
-			NTB_DEBUG_PRINT(("NTB: INTX setup failed\n"));
+			NTB_DEBUG_PRINT(("%s INTX SETUP FAILED\n",
+			PREFIX_STRING));
 			device->msix_entry_no = 0;
 			device->intx_entry_no = 0;
 			device->msi_entry_no = 0;
 			return -EPERM;
 		} else {
-			device->intx_entry_no = 1;
-			NTB_DEBUG_PRINT(("NTB: INTX setup successful %x\n",
+			device->intx_entry_no = NTB_INTERRUPTS_ENABLED;
+			NTB_DEBUG_PRINT(("%s INTX setup successful %x\n",
+				PREFIX_STRING,
 				device->intx_entry_no));
 		}
 	}
-
+	NTB_DEBUG_PRINT(("%s Exiting ntb_setup_interrupts \n", PREFIX_STRING));
 	return 0;
 
 }
@@ -713,22 +715,31 @@ static int32_t ntb_set_interrupts(struct ntb_device *device)
 static void ntb_release_interrupts(struct ntb_device *device)
 {
 	int32_t i = 0;
-	NTB_DEBUG_PRINT(("NTB: Int entries msix %x msi %x intx %x \n",
+
+	NTB_DEBUG_PRINT(("%s Entering ntb_release_interrupts \n",
+		PREFIX_STRING));
+
+	NTB_DEBUG_PRINT(("%s Int entries msix== %x msi== %x intx = %x \n",
+	PREFIX_STRING,
 	device->msix_entry_no, device->msi_entry_no, device->intx_entry_no));
 
 	if (device->msix_entry_no != 0) {
-		NTB_DEBUG_PRINT(("NTB: Release MSIX Entries \n"));
+		NTB_DEBUG_PRINT(("%s Release MSIX Entries \n", PREFIX_STRING));
 		for (i = 0; i < device->msix_entry_no; i++)
 			free_irq(device->msix_entries[i].vector, device);
 		pci_disable_msix(device->dev);
 	} else if (device->msi_entry_no != 0) {
-		NTB_DEBUG_PRINT(("NTB: Release MSI Entries \n"));
+		NTB_DEBUG_PRINT(("%s Release MSI Entries \n", PREFIX_STRING));
 		free_irq(device->dev->irq, device);
 		pci_disable_msi(device->dev);
 	} else if (device->intx_entry_no != 0) {
-		NTB_DEBUG_PRINT(("NTB: Release Legacy Entries \n"));
+		NTB_DEBUG_PRINT(("%s Release Legacy Entries \n",
+		PREFIX_STRING));
 		free_irq(device->dev->irq, device);
 	}
+
+	NTB_DEBUG_PRINT(("%s Exiting ntb_release_interrupts \n",
+	PREFIX_STRING));
 
 }
 
@@ -848,7 +859,7 @@ static int32_t ntb_resume(struct pci_dev *dev)
 			device->client_pm_acknowledgement =
 			device->client_pm_acknowledgement | PM_ACK_23;
 			client_list->clients[NTB_CLIENT_23].callback(
-			client_list->clients[NTB_CLIENT_45].handle,
+			client_list->clients[NTB_CLIENT_23].handle,
 			doorbell,
 			pad);
 		}
@@ -897,31 +908,36 @@ static int32_t ntb_get_bar_addresses(struct ntb_device *device)
 	void *virtual_address;
 	int req = 0;
 
+	NTB_DEBUG_PRINT(("%s Entering ntb_get_bar_addresses\n", PREFIX_STRING));
+
 	for (i = 0; i < BAR_NO; i++) {
 		virtual_address = NULL;
 
 		req = pci_request_region(device->dev, bars[i], g_ntb_name);
 		if (req != 0) {
-			NTB_DEBUG_PRINT(("NTB: FAILED TO OBTAIN %i\n", i));
+			NTB_DEBUG_PRINT((
+			"%s FAILED TO OBTAIN pci region %i\n",
+			PREFIX_STRING, i));
 			return -ENODEV;
 		}
 
 		device->pci_bar[i] = pci_resource_start(device->dev,
 			bars[i]);
 
-		NTB_DEBUG_PRINT(("NTB: BAR %Lx\n", device->pci_bar[i]));
+		NTB_DEBUG_PRINT(("%s BAR = %Lx\n", PREFIX_STRING,
+		device->pci_bar[i]));
 
 		/*See README.txt for details about this ioremap call */
 		virtual_address = ioremap(device->pci_bar[i],
 			pci_resource_len(device->dev, bars[i]));
 
 		if (virtual_address == NULL) {
-			NTB_DEBUG_PRINT(("NTB: IOREMAP FAILED\n"));
+			NTB_DEBUG_PRINT(("%s IOREMAP FAILED\n", PREFIX_STRING));
 			return -EPERM;
 
 		} else {
-			NTB_DEBUG_PRINT(("NTB: VIRTUAL ADDRESS %p\n",
-				virtual_address));
+			NTB_DEBUG_PRINT(("%s virtual address = %p\n",
+				PREFIX_STRING, virtual_address));
 		}
 
 		if (i == DEVICE_BAR_01)
@@ -933,7 +949,7 @@ static int32_t ntb_get_bar_addresses(struct ntb_device *device)
 			device->pci_bar_45_virt = virtual_address;
 
 	}
-
+	NTB_DEBUG_PRINT(("%s Exiting ntb_get_bar_addresses\n", PREFIX_STRING));
 	return 0;
 }
 /*****************************************************************************
@@ -951,7 +967,8 @@ static void ntb_release_bar_addresses(struct ntb_device *device)
 			PCI_CONFIG_SPACE_23,
 			PCI_CONFIG_SPACE_45 };
 
-	NTB_DEBUG_PRINT(("NTB: RELEASE BAR ADDRESSES\n"));
+	NTB_DEBUG_PRINT(("%s Entering ntb_release_bar_addresses \n",
+	PREFIX_STRING));
 
 	if (device->mm_regs != NULL)
 		iounmap(device->mm_regs);
@@ -962,34 +979,43 @@ static void ntb_release_bar_addresses(struct ntb_device *device)
 	if (device->pci_bar_45_virt != NULL)
 		iounmap(device->pci_bar_45_virt);
 
-	NTB_DEBUG_PRINT(("NTB: SUCCESSFUL IOUNMAP\n"));
+	NTB_DEBUG_PRINT(("%s SUCCESSFUL IOUNMAP\n", PREFIX_STRING));
 	for (i = 0; i < BAR_NO; i++) {
 		/* If configured for 32 bit, there are two BAR vals */
 		if (device->pci_bar[i] != 0) {
-			NTB_DEBUG_PRINT(("NTB: RELEASE BAR %x\n", bars[i]));
+			NTB_DEBUG_PRINT(("%s release BAR %x\n", PREFIX_STRING,
+			bars[i]));
 			pci_release_region(device->dev, bars[i]);
 
 		}
 	}
+	NTB_DEBUG_PRINT(("%s Exiting ntb_release_bar_addresses \n",
+		PREFIX_STRING));
 
 }
 
 /*****************************************************************************
  * See ntb_main.h
  ****************************************************************************/
-int32_t ntb_get_api(struct ntb_api_export *funcs)
+int32_t ntb_get_b2b_api(struct ntb_api_export *funcs)
 {
 	int32_t err = SUCCESS;
+	NTB_DEBUG_PRINT(("%s Entering ntb_get_b2b_api\n",
+			PREFIX_STRING));
 	if (funcs != NULL) {
 		*funcs = ntb_api;
 	} else {
 		NTB_DEBUG_PRINT(
-		("NTB: FAILED INITIALIZATION OF NTB FUNCTION TABLE\n"));
+		("%s FAILED INITIALIZATION OF NTB FUNCTION TABLE\n",
+		PREFIX_STRING));
 		err = FAILED;
 	}
+
+	NTB_DEBUG_PRINT(("%s Exiting ntb_get_b2b_api\n",
+			PREFIX_STRING));
 	return err;
 }
-EXPORT_SYMBOL(ntb_get_api);
+EXPORT_SYMBOL(ntb_get_b2b_api);
 
 /*****************************************************************************
  * See ntb_main.h
