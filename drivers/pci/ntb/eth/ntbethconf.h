@@ -25,14 +25,16 @@
 
 //enable/disable debug logs
 //#define NTBETHDEBUG(fmt, args...) printk(KERN_INFO "ntbeth: " fmt, ## args)
-#define NTBETHDEBUG(fmt, args...) /* not debugging: nothing */
+#define NTBETHDEBUG(fmt, args...) ;/* not debugging: nothing */
 
 #define NTBETH_MAC              "\0NTBE0"
-#define NTBETH_MAX_MTUSIZE     150000
+#define NTBETH_MAX_MTUSIZE     1500
 #define MAX_PACKET_BUF_LEN  (NTBETH_MAX_MTUSIZE + 100)
 #define NTBETH_MIN_MTUSIZE     68
 
 #define NTBETH_SUCCESS 0
 #define NTBETH_FAIL 1
+
+#define NTBETH_VERSION     "3.0"
 
 #endif 

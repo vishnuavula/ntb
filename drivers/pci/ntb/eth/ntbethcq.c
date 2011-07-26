@@ -24,64 +24,29 @@
 #include "ntbethcq.h"
 
 
-int init_cq(struct cq *pCq, int iCqSize, unsigned int uiCqType, void *pRemoteCq)
+int init_cq(struct cq *cq, int cq_size, unsigned int cq_type)
 {
-  pCq->uiCqType = uiCqType;
-  pCq->pRemoteCq = pRemoteCq;
+  cq->cq_type = cq_type;
   // intialize both put and get pointers to 0
-  pCq->uiAvailPutWrapBit = pCq->uiAvailGetWrapBit = pCq->uiAvailPutIndex = pCq->uiAvailGetIndex = pCq->uiPutIndex = pCq->uiPutWrapBit = pCq->uiGetWrapBit = pCq->uiGetIndex = 0 ; 
-  pCq->uiCqSize = iCqSize;
-  pCq->uiSignature = 0xA12B23C3;
+  cq->avail_put_index = cq->avail_get_index = cq->put_index = cq->get_index = 0 ; 
+  cq->cq_size = cq_size;
+  cq->signature = 0xA12B23C3;
   return (0);
 }
 
-// return value -1 is error zero is success
-int put_into_cq(struct cq *pCq, struct q_element *psEle)
-{
-  // check for full condition
-   if((pCq->uiGetIndex == pCq->uiPutIndex) && (pCq->uiGetWrapBit != pCq->uiPutWrapBit)) return (-1);
-   if((pCq->uiPutIndex+1) == pCq->uiCqSize)
-   {
-      pCq->uiPutIndex = 0;
-      pCq->uiPutWrapBit = (~pCq->uiPutWrapBit & 0x1);
-   }
-   else
-   {
-      pCq->uiPutIndex = pCq->uiPutIndex + 1;
-   }
-   pCq->sQArray[pCq->uiPutIndex] = *psEle;
-  return 0;
-}
-
-int get_from_cq(struct cq *pCq, struct q_element *psEle)
+// return value 1 is Qempty zero is not empty
+int is_cq_empty(struct cq *cq)
 {
   // check for empty condition
-   if((pCq->uiGetIndex == pCq->uiPutIndex) && (pCq->uiGetWrapBit == pCq->uiPutWrapBit)) return (-1);
-   if((pCq->uiGetIndex + 1) == pCq->uiCqSize)
-   {
-      pCq->uiGetIndex = 0;
-      pCq->uiGetWrapBit = (~pCq->uiGetWrapBit & 0x1);
-   }
-   else
-   {
-      pCq->uiGetIndex = pCq->uiGetIndex +1;
-   }
-   *psEle = pCq->sQArray[pCq->uiGetIndex];
-  return 0;
+   return(cq->get_index == cq->put_index) ;  
 }
 
 // return value 1 is Qempty zero is not empty
-int is_cq_empty(struct cq *pCq)
+int is_cq_full(struct cq *cq)
 {
-  // check for empty condition
-   return((pCq->uiGetIndex == pCq->uiPutIndex) && (pCq->uiGetWrapBit == pCq->uiPutWrapBit));  
-}
-
-// return value 1 is Qempty zero is not empty
-int is_cq_full(struct cq *pCq)
-{
-  // check for empty condition
-   return((pCq->uiGetIndex == pCq->uiPutIndex) && (pCq->uiGetWrapBit != pCq->uiPutWrapBit));  
+  int tmp;
+  tmp = (cq->put_index + 1) % cq->cq_size;
+  return(cq->get_index == tmp);
 }
 
 // this routine returns 0 if the q is full.
@@ -93,40 +58,31 @@ void *cq_get_current_put_entry_loc(struct cq *cq)
       printk("NTBETHCQ: ERROR cq validation failed in cq_get_current_put_entry_loc\n"); 
       return 0;
    }
-   if((cq->uiAvailGetIndex == cq->uiAvailPutIndex) && (cq->uiAvailGetWrapBit != cq->uiAvailPutWrapBit))
+   loc =  ((void *)&cq->qarray[cq->avail_put_index]);
+   if((cq->avail_put_index+1) == cq->cq_size)
    {
-    printk (KERN_INFO ": ERROR: CQ full\n"); 
-    return (0);
-   }
-   // return pointer to the packet remote  buffer 
-  // loc =  ((void *)&cq->pRemoteCq->sQArray[cq->uiAvailPutIndex]);
-   loc =  ((void *)&cq->sQArray[cq->uiAvailPutIndex]);
-   if((cq->uiAvailPutIndex+1) == cq->uiCqSize)
-   {
-      cq->uiAvailPutIndex = 0;
-      cq->uiAvailPutWrapBit = ((~cq->uiAvailPutWrapBit) & 0x1);
-      // check for wrap bit here for full condition
+      cq->avail_put_index = 0;
    }
    else
    {
-      cq->uiAvailPutIndex = cq->uiAvailPutIndex + 1;
+      cq->avail_put_index = cq->avail_put_index + 1;
    }
-  return loc;
+   return loc;
 } 
 
 // return 1 if validation fails 0 if success
 int cq_validate(struct cq *cq)
 {
-   if(cq->uiPutIndex > cq->uiCqSize)
+   if(cq->put_index > cq->cq_size)
       goto validate_fail;
-   if(cq->uiAvailPutIndex > cq->uiCqSize)
+   if(cq->avail_put_index > cq->cq_size)
       goto validate_fail;
-   if(cq->uiAvailGetIndex > cq->uiCqSize)
+   if(cq->avail_get_index > cq->cq_size)
       goto validate_fail;
-   if(cq->uiGetIndex > cq->uiCqSize)
+   if(cq->get_index > cq->cq_size)
       goto validate_fail;
 
-   if(cq->uiSignature != 0xA12B23C3)
+   if(cq->signature != 0xA12B23C3)
       goto validate_fail;
    else
       goto validate_pass;
@@ -146,28 +102,14 @@ int cq_update_put_ptr(struct cq *cq)
     printk("NTHETHCQ: cq_update_put_ptr cq validate failed\n");
     return 1;
   }
-  if((cq->uiPutIndex+1) == cq->uiCqSize)
+  if((cq->put_index+1) == cq->cq_size)
   {
-      cq->uiPutIndex = 0;
-      cq->uiPutWrapBit = (~cq->uiPutWrapBit & 0x1);
+      cq->put_index = 0;
   }
   else
   {
-    cq->uiPutIndex = cq->uiPutIndex + 1; 
+    cq->put_index = cq->put_index + 1; 
   }
-  // update put ptr in mirro cq
-  NTBETHDEBUG("Updating  Put Ptr in Remote CQ\n");
-  NTBETHDEBUG("Updating uiAvailPutIndex 0x%x\n",cq->uiAvailPutIndex);
-  NTBETHDEBUG("Updating uiAvailPutWrapBit 0x%x\n",cq->uiAvailPutWrapBit);
-  NTBETHDEBUG("Updating uiPutIndex 0x%x\n",cq->uiPutIndex);
-  NTBETHDEBUG("Updating uiPutWrapBit 0x%x\n",cq->uiPutWrapBit);
-#if 0
-  cq->pRemoteCq->uiAvailPutIndex = cq->uiAvailPutIndex;
-  cq->pRemoteCq->uiAvailPutWrapBit = cq->uiAvailPutWrapBit;
-  cq->pRemoteCq->uiPutIndex = cq->uiPutIndex;
-  cq->pRemoteCq->uiPutWrapBit = cq->uiPutWrapBit;
-#endif
-  
   return 0;
 } 
 
@@ -179,20 +121,14 @@ void *cq_get_current_get_entry_loc(struct cq *cq)
      printk("NTBETHCQ: ERROR : cq_get_current_get_entry_loc cq validation failed\n");
      return 0;
    } 
-   if((cq->uiAvailGetIndex == cq->uiAvailPutIndex) && (cq->uiAvailGetWrapBit == cq->uiAvailPutWrapBit))
-    {
-      printk (KERN_INFO " ERROR: CQ Empty\n"); 
-      return (0);
-    }
-   loc = &cq->sQArray[cq->uiAvailGetIndex];
-   if((cq->uiAvailGetIndex+1) == cq->uiCqSize)
+   loc = &cq->qarray[cq->avail_get_index];
+   if((cq->avail_get_index+1) == cq->cq_size)
    {
-      cq->uiAvailGetIndex = 0;
-      cq->uiAvailGetWrapBit = ((~cq->uiAvailGetWrapBit) & 0x1);
+      cq->avail_get_index = 0;
    }
    else
    {
-      cq->uiAvailGetIndex= cq->uiAvailGetIndex+1;
+      cq->avail_get_index= cq->avail_get_index+1;
    }
    return (loc);
 } 
@@ -204,31 +140,13 @@ int cq_update_get_ptr(struct cq *cq)
     printk("NTBETHCQ: before cq_update_get_ptr cq validate failed\n");
     return 1;
   }
-  if((cq->uiGetIndex+1) == cq->uiCqSize)
+  if((cq->get_index+1) == cq->cq_size)
   {
-      cq->uiGetIndex = 0;
-      cq->uiGetWrapBit = (~cq->uiGetWrapBit & 0x1);
+      cq->get_index = 0;
   }
   else
   {
-    cq->uiGetIndex = cq->uiGetIndex + 1; 
-  }
-  // update get ptrs in remote cq
-  NTBETHDEBUG("Updating  Get Ptr in Remote CQ\n");
-  NTBETHDEBUG("Updating uiAvailGetIndex 0x%x\n",cq->uiAvailGetIndex);
-  NTBETHDEBUG("Updating uiAvailGetWrapBit 0x%x\n",cq->uiAvailGetWrapBit);
-  NTBETHDEBUG("Updating uiGetIndex 0x%x\n",cq->uiGetIndex);
-  NTBETHDEBUG("Updating uiGetWrapBit 0x%x\n",cq->uiGetWrapBit);
-#if 0
-  cq->pRemoteCq->uiAvailGetWrapBit = cq->uiAvailGetWrapBit;
-  cq->pRemoteCq->uiAvailGetIndex = cq->uiAvailGetIndex;
-  cq->pRemoteCq->uiGetWrapBit = cq->uiGetWrapBit;
-  cq->pRemoteCq->uiGetIndex = cq->uiGetIndex;
-#endif
-  if(cq_validate(cq))
-  {
-    printk("NTBETHCQ: after cq_update_get_ptr cq validate failed\n");
-    return 1;
+    cq->get_index = cq->get_index + 1; 
   }
   return 0;
 } 
@@ -251,15 +169,46 @@ int cq_calculate_num_entries(int size)
 void cq_dump_debug_data(struct cq *cq, char *fmtstr)
 {
   printk("%scqPtr == 0x%Lx\n", fmtstr,(unsigned long long)cq); 
-  printk("%scqsize == 0x%x\n",fmtstr, cq->uiCqSize); 
-  printk("%sPutIndex == 0x%x\n",fmtstr, cq->uiPutIndex); 
-  printk("%sGetIndex == 0x%x\n",fmtstr, cq->uiGetIndex); 
-  printk("%sPutWrapBit == 0x%x\n",fmtstr, cq->uiPutWrapBit); 
-  printk("%sGetWrapBit == 0x%x\n",fmtstr, cq->uiGetWrapBit); 
-  printk("%sAvailPutIndex == 0x%x\n",fmtstr, cq->uiAvailPutIndex); 
-  printk("%sAvailGetIndex == 0x%x\n",fmtstr, cq->uiAvailGetIndex); 
-  printk("%sAvailPutWrapBit == 0x%x\n",fmtstr, cq->uiAvailPutWrapBit); 
-  printk("%sAvailGetWrapBit == 0x%x\n", fmtstr,cq->uiAvailGetWrapBit); 
-  printk("%sSignature == 0x%x\n", fmtstr,cq->uiSignature); 
+  printk("%scqsize == 0x%x\n",fmtstr, cq->cq_size); 
+  printk("%sPutIndex == 0x%x\n",fmtstr, cq->put_index); 
+  printk("%sGetIndex == 0x%x\n",fmtstr, cq->get_index); 
+  printk("%sAvailPutIndex == 0x%x\n",fmtstr, cq->avail_put_index); 
+  printk("%sAvailGetIndex == 0x%x\n",fmtstr, cq->avail_get_index); 
+  printk("%sSignature == 0x%x\n", fmtstr,cq->signature); 
   return ;
 } 
+ // return  0 if no buffer
+ //return  non-zero if  buffer
+int cq_is_buf_ready(struct cq *cq)
+{
+    return(!(cq->avail_get_index == cq->put_index));
+}
+// return  0 if  full
+ //return  non-zero if  enough space to copy
+int cq_is_buf_avail(struct cq *cq)
+{
+    return(!(((cq->avail_put_index + 1) % cq->cq_size) == cq->get_index));
+}
+
+inline  unsigned int cq_avail_put_index(struct cq *cq)
+{
+   return (cq->avail_put_index);
+}
+inline unsigned int cq_avail_get_index(struct cq *cq)
+{
+   return (cq->avail_get_index);
+}
+inline  unsigned int cq_put_index(struct cq *cq)
+{
+   return (cq->put_index);
+}
+inline unsigned int cq_get_index(struct cq *cq)
+{
+   return (cq->get_index);
+}
+void * cq_get_buffer(struct cq *cq, int i)
+{
+   void *loc;
+   loc =  ((void *)&cq->qarray[i]);
+   return loc;
+}

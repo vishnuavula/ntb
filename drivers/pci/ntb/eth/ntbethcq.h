@@ -48,21 +48,21 @@ struct q_element
  */
  struct cq
 {
-  unsigned int uiCqType;   // 1 means RX CQ desc for CQ  maintained locally
+  unsigned int cq_type;   // 1 means RX CQ desc for CQ  maintained locally
                            // 2 means TX CQ desc for CQ maintained remotely
-  struct cq *pRemoteCq;
-  unsigned int uiCqSize;
-  unsigned int uiPutIndex;
-  unsigned int uiGetIndex;
-  unsigned int uiPutWrapBit;
-  unsigned int uiGetWrapBit;
-  unsigned int uiAvailPutIndex;
-  unsigned int uiAvailGetIndex;
-  unsigned int uiAvailPutWrapBit;
-  unsigned int uiAvailGetWrapBit;
-  unsigned int uiSignature;
-  struct q_element sQArray[1];
+  unsigned int cq_size;
+  unsigned int put_index;
+  unsigned int get_index;
+  unsigned int avail_put_index;
+  unsigned int avail_get_index;
+  unsigned int signature;
+  struct q_element qarray[1];
 };
+
+inline  unsigned int cq_avail_put_index(struct cq *cq);
+inline unsigned int cq_avail_get_index(struct cq *cq);
+inline  unsigned int cq_put_index(struct cq *cq);
+inline unsigned int cq_get_index(struct cq *cq);
 
 
 //Operations on the Circular Queue
@@ -72,13 +72,7 @@ struct q_element
 
 
 // return value -1 is error zero is success
-int init_cq(struct cq *pCq,int iSize, unsigned int uiCqType,void *pRemoteCq);
-
-// directly copy the given element into current cq put entry and update the put pointer.
-int put_into_cq(struct cq *pCq, struct q_element* psEle);
-
-// directly copy the current cq get entry to given element and update the get pointer.
-int get_from_cq(struct cq *pCq, struct q_element *psEle);
+int init_cq(struct cq *cq,int size, unsigned int  cq_type);
 
 // returns  1 is q is empty otherwise zero 
 int is_cq_empty(struct cq *pCq);
@@ -88,12 +82,16 @@ int is_cq_full(struct cq *pCq);
 
 //just returns the current put entry address, no changes to the q state, except avail_put ptr  
 void *cq_get_current_put_entry_loc(struct cq *cq);
+
 //just returns the current get entry address, no changes to the q state   except avail_get ptr
 void *cq_get_current_get_entry_loc(struct cq *cq);
+
 // updates get ptr
 int cq_update_get_ptr(struct cq *cq);
+
 // updates put ptr
 int cq_update_put_ptr(struct cq *cq);
+
 int cq_validate(struct cq *cq);
 
 // calculate number of entries 
@@ -101,6 +99,10 @@ int cq_calculate_num_entries(int size);
 
 //dumps cq data structure 
 void cq_dump_debug_data(struct cq *cq, char *fmtstr);
+
+int cq_is_buf_ready(struct cq *cq);
+int cq_is_buf_avail(struct cq *cq);
+void * cq_get_buffer(struct cq *cq, int i);
 
 #ifdef __cplusplus
 }
