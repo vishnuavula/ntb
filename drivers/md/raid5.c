@@ -688,8 +688,8 @@ static void ops_run_biofill(struct stripe_head *sh)
 			spin_unlock_irq(&conf->device_lock);
 			while (rbi && rbi->bi_sector <
 				dev->sector + STRIPE_SECTORS) {
-				tx = async_copy_data(0, rbi, dev->page,
-					dev->sector, tx);
+				tx = async_copy_biodata(0, rbi, dev->page, 0,
+							dev->sector, tx);
 				rbi = r5_next_bio(rbi, dev->sector);
 			}
 		}
