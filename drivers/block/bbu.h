@@ -153,7 +153,8 @@ struct bbu_cache_conf {
 	int stripe_members; /* is_striped(bdev) ? num members : 1 */
 	unsigned long stripe_sectors; /* is_striped(bdev) ? num sectors : 0 */
 	struct request_queue *queue; /* backing device request_queue */
-	make_request_fn *make_request; /* backing device make_request_fn */
+	/* backing device make_request_fn */
+	int (*make_request)(struct mddev_s *mddev, struct bio *bio);
 	char name[16+5]; /* 16-char name + 'bbu/' prefix + null */
 	struct kmem_cache *mem_cache; /* for allocating bbu_cache_ents */
 	struct bbu_init_lists {
