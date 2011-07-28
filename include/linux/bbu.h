@@ -16,6 +16,9 @@
  * 51 Franklin St - Fifth Floor, Boston, MA 02110-1301 USA.
  *
  */
+#ifndef _BBU_H_
+#define _BBU_H_
+
 #include <linux/blkdev.h>
 
 struct bbu_device_info {
@@ -46,4 +49,6 @@ static inline int bbu_unregister(const char uuid[16], struct gendisk *disk)
 {
 	return -ENODEV;
 }
+#endif
+
 #endif

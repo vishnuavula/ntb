@@ -1032,8 +1032,8 @@ ops_run_biodrain(struct stripe_head *sh, struct dma_async_tx_descriptor *tx)
 				dev->sector + STRIPE_SECTORS) {
 				if (wbi->bi_rw & REQ_FUA)
 					set_bit(R5_WantFUA, &dev->flags);
-				tx = async_copy_data(1, wbi, dev->page,
-					dev->sector, tx);
+				tx = async_copy_biodata(1, wbi, dev->page, 0,
+							dev->sector, tx);
 				wbi = r5_next_bio(wbi, dev->sector);
 			}
 		}
