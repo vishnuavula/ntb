@@ -1,7 +1,7 @@
 menu "Non-Transparent Bridge Support (EXPERIMENTAL)"
 
 config NTB
-	bool "ntb: NTB hardware driver"
+	tristate "ntb: NTB hardware driver"
 	default n
 	depends on PCI && X86 && EXPERIMENTAL
 
@@ -14,13 +14,13 @@ choice
 	Rootport Primary node, and NTB Classic Rootport Secondary node
 
 config NTB_B2B
-	bool "NTB Back to Back Mode"
+	tristate "NTB Back to Back Mode"
 
 config NTB_RP
-	bool "NTB Classic Rootport Primary"
+	tristate "NTB Classic Rootport Primary"
 
 config RP_NTB
-	bool "NTB Classic Rootport Secondary"
+	tristate "NTB Classic Rootport Secondary"
 
 endchoice
 

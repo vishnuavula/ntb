@@ -1052,3 +1052,11 @@ int32_t ntb_client_suspend(ntb_client_handle_t handle)
 
 module_init(ntb_init);
 module_exit(ntb_exit);
+
+#if defined(CONFIG_NTB_RP) || defined(CONFIG_NTB_RP_MODULE)
+#error NTB_RP config option must be unselected
+#endif
+
+#if defined(CONFIG_NTB_B2B) || defined(CONFIG_NTB_B2B_MODULE)
+#error NTB_B2B config option must be unselected
+#endif
