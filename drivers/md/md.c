@@ -51,6 +51,7 @@
 #include <linux/raid/md_p.h>
 #include <linux/raid/md_u.h>
 #include <linux/slab.h>
+#include <linux/bbu.h>
 #include "md.h"
 #include "bitmap.h"
 
@@ -284,7 +285,7 @@ static DEFINE_SPINLOCK(all_mddevs_lock);
 static int md_make_request(struct request_queue *q, struct bio *bio)
 {
 	const int rw = bio_data_dir(bio);
-	mddev_t *mddev = q->queuedata;
+	mddev_t *mddev = md_queuedata(q);
 	int rv;
 	int cpu;
 	unsigned int sectors;
@@ -317,7 +318,10 @@ static int md_make_request(struct request_queue *q, struct bio *bio)
 	 * go away inside make_request
 	 */
 	sectors = bio_sectors(bio);
-	rv = mddev->pers->make_request(mddev, bio);
+	if (mddev->bbu_make_request)
+		rv = mddev->bbu_make_request(q, bio);
+	else
+		rv = mddev->pers->make_request(mddev, bio);
 
 	cpu = part_stat_lock();
 	part_stat_inc(cpu, &mddev->gendisk->part0, ios[rw]);
@@ -3048,8 +3052,15 @@ level_store(mddev_t *mddev, const char *buf, size_t len)
 	/* request to change the personality.  Need to ensure:
 	 *  - array is not engaged in resync/recovery/reshape
 	 *  - old personality can be suspended
-	 *  - new personality will access other array.
+	 *  - new personality will access other array
+	 *  - bbu is not active
 	 */
+
+	if (mddev->bbu_make_request) {
+		printk(KERN_WARNING "md: takeover while bbu attached not "
+		       "supported\n");
+		return -EBUSY;
+	}
 
 	if (mddev->sync_thread ||
 	    mddev->reshape_position != MaxSector ||
@@ -3557,6 +3568,84 @@ max_corrected_read_errors_store(mddev_t *mddev, const char *buf, size_t len)
 static struct md_sysfs_entry max_corr_read_errors =
 __ATTR(max_read_errors, S_IRUGO|S_IWUSR, max_corrected_read_errors_show,
 	max_corrected_read_errors_store);
+
+static ssize_t
+uuid_show(mddev_t *mddev, char *page)
+{
+	uuid_to_string(page, mddev->uuid, 1);
+	return strlen(page);
+}
+
+static ssize_t
+uuid_store(mddev_t *mddev, const char *buf, size_t len)
+{
+	int err;
+
+	if (mddev->pers || mddev->persistent)
+		return -EBUSY;
+
+	err = parse_uuid((int *) mddev->uuid, buf);
+	if (err)
+		return err;
+	return len;
+}
+static struct md_sysfs_entry md_uuid =
+__ATTR(uuid, S_IRUGO|S_IWUSR, uuid_show, uuid_store);
+
+static ssize_t bbu_show(mddev_t *mddev, char *page)
+{
+	if (mddev->bbu_make_request)
+		return sprintf(page, "1\n");
+	else
+		return sprintf(page, "0\n");
+}
+
+static int md_disable_bbu(mddev_t *mddev)
+{
+	int err;
+
+	if (!mddev->bbu_make_request)
+		return 0;
+
+	if (atomic_read(&mddev->openers) > 1) {
+		pr_info("md: %s still in use\n", mdname(mddev));
+		return -EBUSY;
+	}
+
+	/* open coded "suspend-lite", we just need to ensure all
+	 * incoming io is quiesced and that no new transactions hit
+	 * mddev->bbu_make_request while we are unregistering
+	 */
+	BUG_ON(mddev->suspended);
+	mddev->suspended = 1;
+	synchronize_rcu();
+	wait_event(mddev->sb_wait, atomic_read(&mddev->active_io) == 0);
+	mddev->pers->quiesce(mddev, 1);
+
+	err = bbu_unregister(mddev->uuid, mddev->gendisk);
+	if (err == 0)
+		mddev->bbu_make_request = NULL;
+
+	mddev_resume(mddev);
+
+	if (err)
+		pr_info("md: failed to deactivate bbu: %d\n", err);
+
+	return err;
+}
+
+static ssize_t
+bbu_store(mddev_t *mddev, const char *buf, size_t len)
+{
+	int err = -EINVAL;
+
+	if (sysfs_streq(buf, "0"))
+		err = md_disable_bbu(mddev);
+
+	return err ? err : len;
+}
+static struct md_sysfs_entry md_bbu =
+__ATTR(bbu, S_IRUGO|S_IWUSR, bbu_show, bbu_store);
 
 static ssize_t
 null_show(mddev_t *mddev, char *page)
@@ -4192,6 +4281,8 @@ static struct attribute *md_default_attrs[] = {
 	&md_reshape_position.attr,
 	&md_array_size.attr,
 	&max_corr_read_errors.attr,
+	&md_uuid.attr,
+	&md_bbu.attr,
 	NULL,
 };
 
@@ -4340,7 +4431,11 @@ static int md_alloc(dev_t dev, char *name)
 	mddev->queue = blk_alloc_queue(GFP_KERNEL);
 	if (!mddev->queue)
 		goto abort;
-	mddev->queue->queuedata = mddev;
+
+	/* frontend caching agent (bbu) can store its private data in
+	 * *(q->queuedata)
+	 */
+	mddev->queue->queuedata = &mddev->mddev_data;
 
 	blk_queue_make_request(mddev->queue, md_make_request);
 

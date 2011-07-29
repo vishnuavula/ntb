@@ -22,7 +22,7 @@ static int detect_memory_e820(void)
 	int count = 0;
 	struct biosregs ireg, oreg;
 	struct e820entry *desc = boot_params.e820_map;
-	static struct e820entry buf; /* static so it is zeroed */
+	static struct e820ext buf; /* static so it is zeroed */
 
 	initregs(&ireg);
 	ireg.ax  = 0xe820;
@@ -39,9 +39,8 @@ static int detect_memory_e820(void)
 	 * This routine deliberately does not try to account for
 	 * ACPI 3+ extended attributes.  This is because there are
 	 * BIOSes in the field which report zero for the valid bit for
-	 * all ranges, and we don't currently make any use of the
-	 * other attribute bits.  Revisit this if we see the extended
-	 * attribute bits deployed in a meaningful way in the future.
+	 * all ranges.  However, if CONFIG_ADR=y we will try to detect
+	 * protected memory.
 	 */
 
 	do {
@@ -64,7 +63,14 @@ static int detect_memory_e820(void)
 			break;
 		}
 
-		*desc++ = buf;
+		*desc = buf.e;
+
+		/* Detect ADR protected memory and fix up the top level
+		   type from 'reserved' to something meaningful */
+		if (is_e820_protected(&buf))
+			desc->type = E820_PROTECTED_KERN;
+
+		desc++;
 		count++;
 	} while (ireg.ebx && count < ARRAY_SIZE(boot_params.e820_map));
 

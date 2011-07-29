@@ -13,6 +13,8 @@ if MD
 
 config BLK_DEV_MD
 	tristate "RAID support"
+	select UUID
+	select BLK_BBU if MD_RAID456_BBU
 	---help---
 	  This driver lets you combine several hard disk partitions into one
 	  logical block device. This can be used to simply append one
@@ -126,6 +128,7 @@ config MD_RAID456
 	select ASYNC_XOR
 	select ASYNC_PQ
 	select ASYNC_RAID6_RECOV
+	select BLK_BBU if MD_RAID456_BBU
 	---help---
 	  A RAID-5 set of N drives with a capacity of C MB per drive provides
 	  the capacity of C * (N - 1) MB, and protects against a failure
@@ -162,6 +165,22 @@ config MULTICORE_RAID456
 	---help---
 	  Enable the raid456 module to dispatch per-stripe raid operations to a
 	  thread pool.
+
+	  If unsure, say N.
+
+config MD_RAID456_BBU
+	bool "Battery backed write cache support (EXPERIMENTAL)"
+	depends on ADR
+	depends on MD_RAID456
+	depends on EXPERIMENTAL
+	---help---
+	  If the platform has ADR support (battery backed system
+	  memory), then md/raid456 can take advantage of that memory to
+	  implement a protected cache for incoming writes.  See
+	  Documentation/blockdev/bbu.txt for details on configuring a write
+	  cache.
+
+	  If the platform has ADR memory say Y.
 
 	  If unsure, say N.
 
