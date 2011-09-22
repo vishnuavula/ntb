@@ -618,7 +618,8 @@ struct pci_driver {
 /* these external functions are only available when PCI support is enabled */
 #ifdef CONFIG_PCI
 
-extern void pcie_bus_configure_settings(struct pci_bus *bus, u8 smpss);
+extern void pcie_bus_configure_settings_root(struct pci_bus *bus);
+extern void pcie_bus_configure_settings(struct pci_bus *bus);
 
 enum pcie_bus_config_types {
 	PCIE_BUS_PERFORMANCE,

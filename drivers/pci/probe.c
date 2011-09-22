@@ -1451,14 +1451,16 @@ static int pcie_bus_configure_set(struct pci_dev *dev, void *data)
  * parents then children fashion.  If this changes, then this code will not
  * work as designed.
  */
-void pcie_bus_configure_settings(struct pci_bus *bus, u8 mpss)
+void pcie_bus_configure_settings(struct pci_bus *bus)
 {
-	u8 smpss = mpss;
+	u8 smpss;
 
-	if (!pci_is_pcie(bus->self))
+	if (!bus || !bus->self || !pci_is_pcie(bus->self))
 		return;
 
 	if (pcie_bus_config == PCIE_BUS_SAFE) {
+		smpss = bus->self->pcie_mpss;
+
 		pcie_find_smpss(bus->self, &smpss);
 		pci_walk_bus(bus, pcie_find_smpss, &smpss);
 	}
@@ -1467,6 +1469,17 @@ void pcie_bus_configure_settings(struct pci_bus *bus, u8 mpss)
 	pci_walk_bus(bus, pcie_bus_configure_set, &smpss);
 }
 EXPORT_SYMBOL_GPL(pcie_bus_configure_settings);
+
+void pcie_bus_configure_settings_root(struct pci_bus *bus)
+{
+	struct pci_bus *child;
+
+	if (!bus)
+		return;
+
+	list_for_each_entry(child, &bus->children, node)
+		pcie_bus_configure_settings(child);
+}
 
 unsigned int __devinit pci_scan_child_bus(struct pci_bus *bus)
 {
