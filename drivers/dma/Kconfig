@@ -72,6 +72,10 @@ config INTEL_IOATDMA
 
 	  If unsure, say N.
 
+config BWD_A0
+	bool "Briarwood A0 silicon bug workarounds"
+	depends on INTEL_IOATDMA
+
 config INTEL_IOP_ADMA
 	tristate "Intel IOP ADMA support"
 	depends on ARCH_IOP32X || ARCH_IOP33X || ARCH_IOP13XX
