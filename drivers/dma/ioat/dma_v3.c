@@ -1597,7 +1597,11 @@ int __devinit ioat3_dma_probe(struct ioatdma_device *device, int dca)
 	}
 
 	/* multicast capability */
+#ifdef BWD_A0
+	if (device->version >= IOAT_VER_3_3) {
+#else
 	if (cap & IOAT_CAP_DMAMC) {
+#endif
 		dma_cap_set(DMA_MCAST, dma->cap_mask);
 		dma->device_prep_dma_mcast = ioat3_prep_mcast_lock;
 	}
