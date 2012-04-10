@@ -24,8 +24,5 @@ config ASYNC_RAID6_RECOV
 	select ASYNC_PQ
 	select ASYNC_XOR
 
-config ASYNC_TX_DISABLE_PQ_VAL_DMA
-	bool
-
 config ASYNC_TX_DISABLE_XOR_VAL_DMA
 	bool

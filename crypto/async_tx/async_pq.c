@@ -245,9 +245,6 @@ EXPORT_SYMBOL_GPL(async_gen_syndrome);
 static inline struct dma_chan *
 pq_val_chan(struct async_submit_ctl *submit, struct page **blocks, int disks, size_t len)
 {
-	#ifdef CONFIG_ASYNC_TX_DISABLE_PQ_VAL_DMA
-	return NULL;
-	#endif
 	return async_tx_find_channel(submit, DMA_PQ_VAL, NULL, 0,  blocks,
 				     disks, len);
 }
