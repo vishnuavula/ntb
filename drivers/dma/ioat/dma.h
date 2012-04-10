@@ -92,7 +92,13 @@ struct ioatdma_device {
 	void (*cleanup_fn)(unsigned long data);
 	void (*timer_fn)(unsigned long data);
 	int (*self_test)(struct ioatdma_device *device);
+	int (*init_device)(struct ioatdma_device *device);
 };
+
+enum ioat_hwbugs {
+	IOAT_LEGACY_COMPLETION_REQUIRED = (1 << 0),
+};
+
 
 struct ioat_chan_common {
 	struct dma_chan common;
@@ -115,6 +121,8 @@ struct ioat_chan_common {
 	u64 *completion;
 	struct tasklet_struct cleanup_task;
 	struct kobject kobj;
+
+	u32 hwbug_flags;
 };
 
 struct ioat_sysfs_entry {

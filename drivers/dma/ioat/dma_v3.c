@@ -647,7 +647,8 @@ __ioat3_prep_pq_lock(struct dma_chan *c, enum sum_check_flags *result,
 	 * order.
 	 */
 	if (likely(num_descs) &&
-	    ioat2_check_space_lock(ioat, num_descs+1) == 0)
+	    ioat2_check_space_lock(ioat, num_descs + !!(chan->hwbug_flags &
+			    IOAT_LEGACY_COMPLETION_REQUIRED)) == 0)
 		idx = ioat->head;
 	else
 		return NULL;
@@ -701,16 +702,23 @@ __ioat3_prep_pq_lock(struct dma_chan *c, enum sum_check_flags *result,
 	pq->ctl_f.fence = !!(flags & DMA_PREP_FENCE);
 	dump_pq_desc_dbg(ioat, desc, ext);
 
-	/* completion descriptor carries interrupt bit */
-	compl_desc = ioat2_get_ring_ent(ioat, idx + i);
-	compl_desc->txd.flags = flags & DMA_PREP_INTERRUPT;
-	hw = compl_desc->hw;
-	hw->ctl = 0;
-	hw->ctl_f.null = 1;
-	hw->ctl_f.int_en = !!(flags & DMA_PREP_INTERRUPT);
-	hw->ctl_f.compl_write = 1;
-	hw->size = NULL_DESC_BUFFER_SIZE;
-	dump_desc_dbg(ioat, compl_desc);
+	if (!(chan->hwbug_flags & IOAT_LEGACY_COMPLETION_REQUIRED)) {
+		pq->ctl_f.int_en = !!(flags & DMA_PREP_INTERRUPT);
+		pq->ctl_f.compl_write = 1;
+		compl_desc = desc;
+	} else {
+		/* completion descriptor carries interrupt bit */
+		compl_desc = ioat2_get_ring_ent(ioat, idx + i);
+		compl_desc->txd.flags = flags & DMA_PREP_INTERRUPT;
+		hw = compl_desc->hw;
+		hw->ctl = 0;
+		hw->ctl_f.null = 1;
+		hw->ctl_f.int_en = !!(flags & DMA_PREP_INTERRUPT);
+		hw->ctl_f.compl_write = 1;
+		hw->size = NULL_DESC_BUFFER_SIZE;
+		dump_desc_dbg(ioat, compl_desc);
+	}
+
 
 	/* we leave the channel locked to ensure in order submission */
 	return &compl_desc->txd;
@@ -1248,6 +1256,46 @@ static bool is_snb_ioat(struct pci_dev *pdev)
 	}
 }
 
+
+static int ioat3_init_device(struct ioatdma_device *device)
+{
+	struct pci_dev *pdev = device->pdev;
+	struct dma_device *dma;
+	struct dma_chan *c;
+	struct ioat_chan_common *chan;
+	u32 cap, errmask;
+
+	dma = &device->common;
+
+	cap = readl(device->reg_base + IOAT_DMA_CAP_OFFSET);
+	/*
+	 * if we have descriptor write back error status, we mask the
+	 * error interrupts
+	 */
+#if 0
+	if (cap & (IOAT_CAP_DWBES | IOAT_CAP_RAID16SS)) {
+		list_for_each_entry(c, &dma->channels, device_node) {
+			chan = to_chan_common(c);
+			errmask = readl(chan->reg_base +
+					IOAT_CHANERR_MASK_OFFSET);
+			errmask |= IOAT_CHANERR_XOR_P_OR_CRC_ERR |
+				   IOAT_CHANERR_XOR_Q_ERR;
+			writel(errmask, chan->reg_base +
+					IOAT_CHANERR_MASK_OFFSET);
+		}
+	}
+#endif
+
+	list_for_each_entry(c, &dma->channels, device_node) {
+		if (is_jf_ioat(pdev) || is_snb_ioat(pdev)) {
+			chan = to_chan_common(c);
+			chan->hwbug_flags |= IOAT_LEGACY_COMPLETION_REQUIRED;
+		}
+	}
+
+	return 0;
+}
+
 int __devinit ioat3_dma_probe(struct ioatdma_device *device, int dca)
 {
 	struct pci_dev *pdev = device->pdev;
@@ -1262,6 +1310,7 @@ int __devinit ioat3_dma_probe(struct ioatdma_device *device, int dca)
 	device->enumerate_channels = ioat2_enumerate_channels;
 	device->reset_hw = ioat3_reset_hw;
 	device->self_test = ioat3_dma_self_test;
+	device->init_device = ioat3_init_device;
 	dma = &device->common;
 	dma->device_prep_dma_memcpy = ioat2_dma_prep_memcpy_lock;
 	dma->device_issue_pending = ioat2_issue_pending;
