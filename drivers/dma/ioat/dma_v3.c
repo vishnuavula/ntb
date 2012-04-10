@@ -1196,7 +1196,7 @@ int __devinit ioat3_dma_probe(struct ioatdma_device *device, int dca)
 	struct ioat_chan_common *chan;
 	bool is_raid_device = false;
 	int err;
-	u32 cap;
+	u32 cap, cbctl;
 
 	device->enumerate_channels = ioat2_enumerate_channels;
 	device->reset_hw = ioat3_reset_hw;
@@ -1212,6 +1212,11 @@ int __devinit ioat3_dma_probe(struct ioatdma_device *device, int dca)
 
 	dma_cap_set(DMA_INTERRUPT, dma->cap_mask);
 	dma->device_prep_dma_interrupt = ioat3_prep_interrupt_lock;
+
+#ifdef CONFIG_BWD_A0
+	cbctl = 0xcf;
+	pci_write_config_dword(pdev, 0x7c, cbctl);
+#endif
 
 	cap = readl(device->reg_base + IOAT_DMA_CAP_OFFSET);
 
