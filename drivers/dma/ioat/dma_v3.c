@@ -70,6 +70,8 @@
 /* ioat hardware assumes at least two sources for raid operations */
 #define src_cnt_to_sw(x) ((x) + 2)
 #define src_cnt_to_hw(x) ((x) - 2)
+#define ndest_to_sw(x) ((x) + 1)
+#define ndest_to_hw(x) ((x) - 1)
 
 /* provide a lookup table for setting the source address in the base or
  * extended descriptor of an xor or pq descriptor
@@ -134,6 +136,26 @@ static void ioat3_dma_unmap(struct ioat2_dma_chan *ioat,
 		if (!(flags & DMA_COMPL_SKIP_DEST_UNMAP))
 			ioat_unmap(pdev, hw->dst_addr - offset, len,
 				   PCI_DMA_FROMDEVICE, flags, 1);
+		break;
+	}
+	case IOAT_OP_MCAST: {
+		struct ioat_mcast_descriptor *hw = desc->mcast;
+		int dsts = ndest_to_sw(hw->ctl_f.ndest) - 1;
+
+		if (!(flags & DMA_COMPL_SKIP_SRC_UNMAP))
+			ioat_unmap(pdev, hw->src_addr - offset, len,
+				   PCI_DMA_TODEVICE, flags, 0);
+
+		if (!(flags & DMA_COMPL_SKIP_DEST_UNMAP)) {
+			int i;
+			ioat_unmap(pdev, hw->dst_addr_1 - offset, len,
+				   PCI_DMA_FROMDEVICE, flags, 0);
+
+			for (i = 0; i < dsts; i++) {
+				ioat_unmap(pdev, hw->dst_addr_x[i] - offset,
+					   len, PCI_DMA_FROMDEVICE, flags, 0);
+			}
+		}
 		break;
 	}
 	case IOAT_OP_XOR_VAL:
@@ -538,6 +560,67 @@ ioat3_tx_status(struct dma_chan *c, dma_cookie_t cookie,
 	ioat3_cleanup(ioat);
 
 	return dma_cookie_status(c, cookie, txstate);
+}
+
+static struct dma_async_tx_descriptor *
+ioat3_prep_mcast_lock(struct dma_chan *c, dma_addr_t *dma_dest,
+		      int dest_num, dma_addr_t dma_src, size_t len,
+		      unsigned long flags)
+{
+	struct ioat2_dma_chan *ioat = to_ioat2_chan(c);
+	struct ioat_ring_ent *desc;
+	struct ioat_mcast_descriptor *hw;
+	size_t total_len = len;
+	int num_descs, i, dsts, idx;
+	dma_addr_t dst_addr[5];
+	dma_addr_t src_addr = dma_src;
+
+	if (dest_num < 1)
+		return NULL;
+
+	num_descs = ioat2_xferlen_to_descs(ioat, len);
+	if (num_descs && ioat2_check_space_lock(ioat, num_descs) == 0)
+		idx = ioat->head;
+	else
+		return NULL;
+
+	for (i = 0; i < dest_num; i++)
+		dst_addr[i] = dma_dest[i];
+
+	i = 0;
+	do {
+		size_t copy = min_t(size_t, len, 1 << ioat->xfercap_log);
+
+		desc = ioat2_get_ring_ent(ioat, idx + i);
+		hw = (struct ioat_mcast_descriptor *)desc->hw;
+
+		hw->size = copy;
+		hw->ctl = 0;
+		hw->ctl_f.op = IOAT_OP_MCAST;
+		hw->src_addr = src_addr;
+		hw->ctl_f.ndest = ndest_to_hw(dest_num);
+
+		hw->dst_addr_1 = dst_addr[0];
+
+		for (dsts = 1; dsts < dest_num; dsts++) {
+			hw->dst_addr_x[dsts] = dst_addr[dsts];
+			dst_addr[dsts] += copy;
+		}
+
+		len -= copy;
+		src_addr += copy;
+
+		dump_desc_dbg(ioat, desc);
+	} while (++i < num_descs);
+
+	desc->txd.flags = flags;
+	desc->len = total_len;
+	hw->ctl_f.int_en = !!(flags & DMA_PREP_INTERRUPT);
+	hw->ctl_f.fence = !!(flags & DMA_PREP_FENCE);
+	hw->ctl_f.compl_write = 1;
+	dump_desc_dbg(ioat, desc);
+
+	return &desc->txd;
 }
 
 static struct dma_async_tx_descriptor *
@@ -1509,6 +1592,11 @@ int __devinit ioat3_dma_probe(struct ioatdma_device *device, int dca)
 		dma->device_prep_dma_memset = ioat3_prep_memset_lock;
 	}
 
+	/* multicast capability */
+	if (cap & IOAT_CAP_DMAMC) {
+		dma_cap_set(DMA_MCAST, dma->cap_mask);
+		dma->device_prep_dma_mcast = ioat3_prep_mcast_lock;
+	}
 
 	if (is_raid_device) {
 		dma->device_tx_status = ioat3_tx_status;
