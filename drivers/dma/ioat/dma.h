@@ -48,6 +48,14 @@
  */
 #define NULL_DESC_BUFFER_SIZE 1
 
+enum ioat_irq_mode {
+	IOAT_NOIRQ = 0,
+	IOAT_MSIX,
+	IOAT_MSIX_SINGLE,
+	IOAT_MSI,
+	IOAT_INTX
+};
+
 /**
  * struct ioatdma_device - internal representation of a IOAT device
  * @pdev: PCI-Express device
@@ -77,6 +85,7 @@ struct ioatdma_device {
 	struct msix_entry msix_entries[4];
 	struct ioat_chan_common *idx[4];
 	struct dca_provider *dca;
+	enum ioat_irq_mode irq_mode;
 	void (*intr_quirk)(struct ioatdma_device *device);
 	int (*enumerate_channels)(struct ioatdma_device *device);
 	int (*reset_hw)(struct ioat_chan_common *chan);

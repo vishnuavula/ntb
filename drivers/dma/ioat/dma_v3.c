@@ -1110,6 +1110,58 @@ static int __devinit ioat3_dma_self_test(struct ioatdma_device *device)
 	return 0;
 }
 
+extern int ioat_dma_setup_interrupts(struct ioatdma_device *device);
+
+static int ioat3_irq_reinit(struct ioatdma_device *device)
+{
+	int msixcnt = device->common.chancnt;
+	struct pci_dev *pdev = device->pdev;
+	int i;
+	struct msix_entry *msix;
+	struct ioat_chan_common *chan;
+	int err = 0;
+
+	switch(device->irq_mode) {
+	case IOAT_MSIX:
+
+		for (i = 0; i < msixcnt; i++) {
+			msix = &device->msix_entries[i];
+			chan = ioat_chan_by_index(device, i);
+			devm_free_irq(&pdev->dev, msix->vector, chan);
+		}
+
+		pci_disable_msix(pdev);
+		break;
+
+	case IOAT_MSIX_SINGLE:
+		msix = &device->msix_entries[0];
+		chan = ioat_chan_by_index(device, 0);
+		devm_free_irq(&pdev->dev, msix->vector, chan);
+		pci_disable_msix(pdev);
+		break;
+
+	case IOAT_MSI:
+		chan = ioat_chan_by_index(device, 0);
+		devm_free_irq(&pdev->dev, pdev->irq, chan);
+		pci_disable_msi(pdev);
+		break;
+
+	case IOAT_INTX:
+		chan = ioat_chan_by_index(device, 0);
+		devm_free_irq(&pdev->dev, pdev->irq, chan);
+		break;
+
+	default:
+		return 0;
+	}
+
+	device->irq_mode = IOAT_NOIRQ;
+
+	err = ioat_dma_setup_interrupts(device);
+
+	return err;
+}
+
 static int ioat3_reset_hw(struct ioat_chan_common *chan)
 {
 	/* throw away whatever the channel was doing and get it
@@ -1146,7 +1198,16 @@ static int ioat3_reset_hw(struct ioat_chan_common *chan)
 	if (dev_id == PCI_DEVICE_ID_INTEL_IOAT_TBG0)
 		pci_write_config_dword(pdev, IOAT_PCI_DMAUNCERRSTS_OFFSET, 0x10);
 
-	return ioat2_reset_sync(chan, msecs_to_jiffies(200));
+	err = ioat2_reset_sync(chan, msecs_to_jiffies(200));
+	if (err) {
+		dev_err(&pdev->dev, "Failed to reset!\n");
+		return err;
+	}
+
+	if (device->irq_mode != IOAT_NOIRQ && device->version >= IOAT_VER_3_3)
+		err = ioat3_irq_reinit(device);
+
+	return err;
 }
 
 static bool is_jf_ioat(struct pci_dev *pdev)
