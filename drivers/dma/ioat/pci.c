@@ -86,8 +86,10 @@ static struct pci_device_id ioat_pci_tbl[] = {
 	/* I/OAT v3.3 platforms */
 	{ PCI_VDEVICE(INTEL, PCI_DEVICE_ID_INTEL_IOAT_BWD0) },
 	{ PCI_VDEVICE(INTEL, PCI_DEVICE_ID_INTEL_IOAT_BWD1) },
+#ifndef CONFIG_BWD_A0
 	{ PCI_VDEVICE(INTEL, PCI_DEVICE_ID_INTEL_IOAT_BWD2) },
 	{ PCI_VDEVICE(INTEL, PCI_DEVICE_ID_INTEL_IOAT_BWD3) },
+#endif
 
 	{ 0, }
 };
