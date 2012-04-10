@@ -1958,7 +1958,12 @@ int __devinit ioat3_dma_probe(struct ioatdma_device *device, int dca)
 
 		if (cap & IOAT_CAP_RAID16SS) {
 			dma_set_maxpq(dma, 16, 0);
+#ifdef BWD_A0
+			/* either 256B align or 14 sources for A0 si bug */
+			dma->pq_align = 8;
+#else
 			dma->pq_align = 0;
+#endif
 		} else {
 			dma_set_maxpq(dma, 8, 0);
 			if (is_jf_ioat(pdev) || is_snb_ioat(pdev))
