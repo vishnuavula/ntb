@@ -81,6 +81,10 @@ struct ioatdma_device {
 	void __iomem *reg_base;
 	struct pci_pool *dma_pool;
 	struct pci_pool *completion_pool;
+	struct dma_pool *sed_pool;
+	struct list_head sed_list;
+	atomic_t sed_cnt;
+	spinlock_t sed_lock;
 	struct dma_device common;
 	u8 version;
 	struct msix_entry msix_entries[4];
@@ -146,6 +150,20 @@ struct ioat_dma_chan {
 	int pending;
 	u16 desccount;
 	u16 active;
+};
+
+/**
+ * struct ioat_sed_ent - wrapper around super extended hardware descriptor
+ * @hw: hardware SED
+ * @sed_dma: dma address for the SED
+ * @list: list member
+ * @parent: point to the dma descriptor that's the parent
+ */
+struct ioat_sed_ent {
+	struct ioat_sed_raw_descriptor *hw;
+	dma_addr_t dma;
+	struct list_head list;
+	struct ioat_ring_ent *parent;
 };
 
 static inline struct ioat_chan_common *to_chan_common(struct dma_chan *c)
@@ -351,6 +369,7 @@ bool ioat_cleanup_preamble(struct ioat_chan_common *chan,
 			   dma_addr_t *phys_complete);
 void ioat_kobject_add(struct ioatdma_device *device, struct kobj_type *type);
 void ioat_kobject_del(struct ioatdma_device *device);
+
 extern const struct sysfs_ops ioat_sysfs_ops;
 extern struct ioat_sysfs_entry ioat_version_attr;
 extern struct ioat_sysfs_entry ioat_cap_attr;

@@ -188,6 +188,9 @@ static void __devexit ioat_remove(struct pci_dev *pdev)
 	if (!device)
 		return;
 
+	if (device->version >= IOAT_VER_3_0)
+		ioat3_dma_remove(device);
+
 	dev_err(&pdev->dev, "Removing dma and dca services\n");
 	if (device->dca) {
 		unregister_dca_provider(device->dca, &pdev->dev);
