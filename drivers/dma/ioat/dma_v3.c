@@ -83,9 +83,26 @@ static const u8 xor_idx_to_field[] = { 1, 4, 5, 6, 7, 0, 1, 2 };
 static const u8 pq_idx_to_desc = 0xf8;
 static const u8 pq16_idx_to_desc[] = { 0, 0, 1, 1, 1, 1, 1, 1, 1,
 				       2, 2, 2, 2, 2, 2, 2 };
+static const u8 pqdif_idx_to_desc[] = { 0, 0, 0, 1, 2, 2, 2, 2 };
+static const u8 pqdif_tagidx_to_desc = 0xe0;
+static const u8 pqdif16_idx_to_desc[] = { 0, 0, 1, 2, 2, 2, 2, 3,
+					  3, 3, 3, 4, 4, 4, 4, 5 };
+static const u8 pqdif16_tagidx_to_desc[] = { 1, 1, 1, 2, 2, 2, 2,
+					     3, 3, 3, 3, 4, 4, 4, 4, 5 };
+
 static const u8 pq_idx_to_field[] = { 1, 4, 5, 0, 1, 2, 4, 5 };
 static const u8 pq16_idx_to_field[] = { 1, 4, 1, 2, 3, 4, 5, 6, 7,
 					0, 1, 2, 3, 4, 5, 6 };
+
+static const u8 pqdif_idx_to_field[] __read_mostly = { 1, 4, 5, 6, 0, 2, 5, 7 };
+static const u8 pqdif_tagidx_to_field[] __read_mostly = { 1, 2, 4, 5, 7, 1, 4,
+							  6 };
+static const u8 pqdif16_idx_to_field[] __read_mostly = { 1, 4, 6, 1, 3, 5, 7,
+							 1, 3, 5, 7, 1, 3, 5,
+							 7, 1 };
+static const u8 pqdif16_tagidx_to_field[] __read_mostly = { 3, 4, 5, 1, 0, 2,
+							    4, 6, 0, 2, 4, 6,
+							    0, 2, 4, 6, 0 };
 
 static void ioat3_eh(struct ioat2_dma_chan *ioat);
 
@@ -114,6 +131,20 @@ static dma_addr_t pq_get_src(struct ioat_raw_descriptor *descs[2], int idx)
 static dma_addr_t pq16_get_src(struct ioat_raw_descriptor *desc[3], int idx)
 {
 	struct ioat_raw_descriptor *raw = desc[pq16_idx_to_desc[idx]];
+
+	return raw->field[pq16_idx_to_field[idx]];
+}
+
+static dma_addr_t pqdif_get_src(struct ioat_raw_descriptor *descs[3], int idx)
+{
+	struct ioat_raw_descriptor *raw = descs[pqdif_idx_to_desc[idx]];
+
+	return raw->field[pqdif_idx_to_field[idx]];
+}
+
+static dma_addr_t pqdif16_get_src(struct ioat_raw_descriptor *desc[5], int idx)
+{
+	struct ioat_raw_descriptor *raw = desc[pqdif16_idx_to_desc[idx]];
 
 	return raw->field[pq16_idx_to_field[idx]];
 }
@@ -193,6 +224,42 @@ static void pq16_set_src(struct ioat_raw_descriptor *desc[3],
 		pq->coef[idx] = coef;
 	else
 		pq16->coef[idx - 8] = coef;
+}
+
+static void pqdif_set_src(struct ioat_raw_descriptor *descs[3],
+			  dma_addr_t addr, u32 offset, u8 coef, u64 tag,
+			  int idx)
+{
+	struct ioat_pqdif_descriptor *pqdif =
+		(struct ioat_pqdif_descriptor *) descs[0];
+	struct ioat_raw_descriptor *raw = descs[pqdif_idx_to_desc[idx]];
+
+	raw->field[pqdif_idx_to_field[idx]] = addr + offset;
+	pqdif->coef[idx] = coef;
+
+	raw = descs[pqdif_tagidx_to_desc >> idx & 1];
+	raw->field[pqdif_tagidx_to_field[idx]] = tag;
+}
+
+static void pqdif16_set_src(struct ioat_raw_descriptor *descs[6],
+			    dma_addr_t addr, u32 offset, u8 coef, u64 tag,
+			    int idx)
+{
+	struct ioat_pqdif_descriptor *pqdif =
+		(struct ioat_pqdif_descriptor *)descs[0];
+	struct ioat_pqdif16_sed_descriptor *pqdif16 =
+		(struct ioat_pqdif16_sed_descriptor *)descs[1];
+	struct ioat_raw_descriptor *raw = descs[pqdif16_idx_to_desc[idx]];
+
+	raw->field[pqdif16_idx_to_field[idx]] = addr + offset;
+
+	if (idx <= 8)
+		pqdif->coef[idx] = coef;
+	else
+		pqdif16->coef[idx - 8] = coef;
+
+	raw = descs[pqdif16_tagidx_to_desc[idx]];
+	raw->field[pqdif16_tagidx_to_field[idx]] = tag;
 }
 
 struct ioat_sed_ent *
@@ -297,6 +364,48 @@ ioat3_put_sed_ent(struct ioatdma_device *device, struct ioat_sed_ent *sed)
 	list_add(&sed->list, &device->sed_list);
 	atomic_inc(&device->sed_cnt);
 	spin_unlock_bh(&device->sed_lock);
+}
+
+struct ioat_sed_ent * ioat3_get_difsed(struct ioat2_dma_chan *ioat)
+{
+	struct ioat_chan_common *chan = &ioat->base;
+	struct ioat_sed_ent *sed;
+	gfp_t mflags = in_atomic() ? GFP_ATOMIC : GFP_KERNEL;
+
+	/*
+	 * the SED for PQ16 DIF requires 5 cache lines
+	 * we are just going to allocate right now.
+	 * a better scheme will be used when there's a consumer
+	 * in the Linux kernel.
+	 */
+	sed = kzalloc(sizeof(struct ioat_sed_ent), mflags);
+	if (!sed) {
+		dev_err(to_dev(chan),
+			"%s: kmalloc sed entry failed\n", __func__);
+		return NULL;
+	}
+
+	sed->hw = dma_alloc_coherent(to_dev(chan),
+			sizeof(struct ioat_pqdif16_sed_descriptor),
+			&sed->dma, mflags);
+	if (!sed->hw) {
+		kfree(sed);
+		dev_err(to_dev(chan),
+			"%s: allocate sed hw entry failed\n", __func__);
+		return NULL;
+	}
+
+	return sed;
+}
+
+void ioat3_put_difsed(struct ioat2_dma_chan *ioat, struct ioat_sed_ent *sed)
+{
+	struct ioat_chan_common *chan = &ioat->base;
+
+	dma_free_coherent(to_dev(chan),
+			  sizeof(struct ioat_pqdif16_sed_descriptor),
+			  sed->hw, sed->dma);
+	kfree(sed);
 }
 
 static u8 _bytes_to_blksz(sector_t blk_sz)
@@ -539,13 +648,105 @@ static void ioat3_dma_unmap(struct ioat2_dma_chan *ioat,
 
 		break;
 	}
+	case IOAT_OP_PQDIF_VAL:
+	case IOAT_OP_PQDIF:
+	{
+		struct ioat_pqdif_descriptor *pqdif = desc->pqdif;
+		struct ioat_ring_ent *ext1, *ext2;
+		struct ioat_pqdif_ext1_descriptor *pqdif_ext1 = NULL;
+		struct ioat_pqdif_ext2_descriptor *pqdif_ext2 = NULL;
+		int src_cnt = src_cnt_to_sw(pqdif->ctl_f.src_cnt);
+		struct ioat_raw_descriptor *descs[3];
+		int i;
+
+		/* there's always an extension for pqdif */
+		ext1 = ioat2_get_ring_ent(ioat, idx + 1);
+		pqdif_ext1 = desc->pqdif_ext1;
+
+		if (src_cnt > 4) {
+			ext2 = ioat2_get_ring_ent(ioat, idx + 2);
+			pqdif_ext2 = desc->pqdif_ext2;
+		}
+
+		/* in the 'continue' case don't unmap the dests as sources */
+		if (dmaf_p_disabled_continue(flags))
+			src_cnt--;
+		else if (dmaf_continue(flags))
+			src_cnt -= 3;
+
+		if (!(flags & DMA_COMPL_SKIP_SRC_UNMAP)) {
+			descs[0] = (struct ioat_raw_descriptor *) pqdif;
+			descs[1] = (struct ioat_raw_descriptor *) pqdif_ext1;
+			descs[2] = (struct ioat_raw_descriptor *) pqdif_ext2;
+
+			for (i = 0; i < src_cnt; i++) {
+				dma_addr_t src = pqdif_get_src(descs, i);
+
+				ioat_unmap(pdev, src - offset, len,
+					   PCI_DMA_TODEVICE, flags, 0);
+			}
+		}
+
+		/* Hmm....P and Q results would have PDIF and QDIF...
+		 * What would be the actual result size to unmap?
+		 */
+		if (!(flags & DMA_COMPL_SKIP_DEST_UNMAP)) {
+			if (!(flags & DMA_PREP_PQ_DISABLE_P))
+				ioat_unmap(pdev, pqdif->p_addr - offset, len,
+					   PCI_DMA_BIDIRECTIONAL, flags, 1);
+			if (!(flags & DMA_PREP_PQ_DISABLE_Q))
+				ioat_unmap(pdev, pqdif->q_addr - offset, len,
+					   PCI_DMA_BIDIRECTIONAL, flags, 1);
+		}
+		break;
+	}
+	case IOAT_OP_PQDIF_16S:
+	case IOAT_OP_PQDIF_VAL_16S: {
+		struct ioat_pqdif_descriptor *pqdif = desc->pqdif;
+		int src_cnt = src16_cnt_to_sw(pqdif->ctl_f.src_cnt);
+		struct ioat_raw_descriptor *descs[6];
+		int i;
+
+		/* in the 'continue' case don't unmap the dests as sources */
+		if (dmaf_p_disabled_continue(flags))
+			src_cnt--;
+		else if (dmaf_continue(flags))
+			src_cnt -= 3;
+
+		if (!(flags & DMA_COMPL_SKIP_SRC_UNMAP)) {
+			descs[0] = (struct ioat_raw_descriptor *)pqdif;
+			for (i = 0; i < 5; i++) {
+				descs[i + 1] = (struct ioat_raw_descriptor *)desc->sed->hw + i;
+			}
+
+			for (i = 0; i < src_cnt; i++) {
+				dma_addr_t src = pqdif16_get_src(descs, i);
+
+				ioat_unmap(pdev, src - offset, len,
+					   PCI_DMA_TODEVICE, flags, 0);
+			}
+		}
+
+		/* Hmm....P and Q results would have PDIF and QDIF...
+		 * What would be the actual result size to unmap?
+		 */
+		if (!(flags & DMA_COMPL_SKIP_DEST_UNMAP)) {
+			if (!(flags & DMA_PREP_PQ_DISABLE_P))
+				ioat_unmap(pdev, pqdif->p_addr - offset, len,
+					   PCI_DMA_BIDIRECTIONAL, flags, 1);
+			if (!(flags & DMA_PREP_PQ_DISABLE_Q))
+				ioat_unmap(pdev, pqdif->q_addr - offset, len,
+					   PCI_DMA_BIDIRECTIONAL, flags, 1);
+		}
+		break;
+	}
 	default:
 		dev_err(&pdev->dev, "%s: unknown op type: %#x\n",
 			__func__, desc->hw->ctl_f.op);
 	}
 }
 
-static bool desc_has_ext(struct ioat_ring_ent *desc)
+static int desc_has_ext(struct ioat_ring_ent *desc)
 {
 	struct ioat_dma_descriptor *hw = desc->hw;
 
@@ -554,16 +755,24 @@ static bool desc_has_ext(struct ioat_ring_ent *desc)
 		struct ioat_xor_descriptor *xor = desc->xor;
 
 		if (src_cnt_to_sw(xor->ctl_f.src_cnt) > 5)
-			return true;
+			return 1;
 	} else if (hw->ctl_f.op == IOAT_OP_PQ ||
 		   hw->ctl_f.op == IOAT_OP_PQ_VAL) {
 		struct ioat_pq_descriptor *pq = desc->pq;
 
 		if (src_cnt_to_sw(pq->ctl_f.src_cnt) > 3)
-			return true;
+			return 1;
+	} else if (hw->ctl_f.op == IOAT_OP_PQDIF ||
+		   hw->ctl_f.op == IOAT_OP_PQDIF_VAL) {
+		struct ioat_pqdif_descriptor *pqdif = desc->pqdif;
+
+		if (src_cnt_to_sw(pqdif->ctl_f.src_cnt) > 4)
+			return 2;
+		else
+			return 1;
 	}
 
-	return false;
+	return 0;
 }
 
 static u64 ioat3_get_current_completion(struct ioat_chan_common *chan)
@@ -634,6 +843,36 @@ static void desc_get_errstat(struct ioat_ring_ent *desc)
 
 			return;
 		}
+		case IOAT_OP_PQDIF_VAL:
+		case IOAT_OP_PQDIF_VAL_16S:
+		{
+			struct ioat_pqdif_descriptor *pqdif = desc->pqdif;
+
+			if (!pqdif->dwbes_f.wbes)
+				return;
+
+			if (pqdif->dwbes_f.p_val_err)
+				*desc->result |= SUM_CHECK_P_RESULT;
+
+			if (pqdif->dwbes_f.q_val_err)
+				*desc->result |= SUM_CHECK_Q_RESULT;
+
+			if (pqdif->dwbes_f.chk_guard_err)
+				*desc->result |= DIF_CHECK_GUARD_RESULT;
+
+			if (pqdif->dwbes_f.chk_app_err)
+				*desc->result |= DIF_CHECK_APP_RESULT;
+
+			if (pqdif->dwbes_f.chk_ref_err)
+				*desc->result |= DIF_CHECK_REF_RESULT;
+
+			if (pqdif->dwbes_f.f_tag_err)
+				*desc->result |= DIF_CHECK_FTAG_RESULT;
+
+			/* XXX what do we do about the source ID? */
+
+			return;
+		}
 		default:
 			return;
 	}
@@ -652,7 +891,7 @@ static void __cleanup(struct ioat2_dma_chan *ioat, dma_addr_t phys_complete)
 	struct ioatdma_device *device = chan->device;
 	struct ioat_ring_ent *desc;
 	bool seen_current = false;
-	int idx = ioat->tail, i;
+	int idx = ioat->tail, i, exts;
 	u16 active;
 
 	dev_dbg(to_dev(chan), "%s: head: %#x tail: %#x issued: %#x\n",
@@ -694,14 +933,21 @@ static void __cleanup(struct ioat2_dma_chan *ioat, dma_addr_t phys_complete)
 			seen_current = true;
 
 		/* skip extended descriptors */
-		if (desc_has_ext(desc)) {
-			BUG_ON(i + 1 >= active);
-			i++;
+		exts = desc_has_ext(desc);
+		if (exts) {
+			BUG_ON(i + exts >= active);
+			i += exts;
 		}
 
 		/* cleanup super extended descriptors */
 		if (desc->sed) {
-			ioat3_put_sed_ent(device, desc->sed);
+			struct ioat_dma_descriptor *hw = desc->hw;
+			if (hw->ctl_f.op == IOAT_OP_PQDIF ||
+			    hw->ctl_f.op == IOAT_OP_PQDIF_VAL)
+				ioat3_put_difsed(ioat, desc->sed);
+			else
+				ioat3_put_sed_ent(device, desc->sed);
+
 			desc->sed = NULL;
 		}
 	}
@@ -826,6 +1072,33 @@ static void ioat3_eh(struct ioat2_dma_chan *ioat)
 			*desc->result |= DIF_CHECK_REF_RESULT;
 			err_handled |= IOAT_CHANERR_DIF_RES_REF_TAG_ERR;
 		}
+		break;
+	case IOAT_OP_PQDIF_VAL_16S:
+		if (chanerr & IOAT_CHANERR_XOR_P_OR_CRC_ERR) {
+			*desc->result |= SUM_CHECK_P_RESULT;
+			err_handled |= IOAT_CHANERR_XOR_P_OR_CRC_ERR;
+		}
+		if (chanerr & IOAT_CHANERR_XOR_Q_ERR) {
+			*desc->result |= SUM_CHECK_Q_RESULT;
+			err_handled |= IOAT_CHANERR_XOR_Q_ERR;
+		}
+		if (chanerr & IOAT_CHANERR_DIF_RES_ALL_F_ERR) {
+			*desc->result |= DIF_CHECK_FTAG_RESULT;
+			err_handled |= IOAT_CHANERR_DIF_RES_ALL_F_ERR;
+		}
+		if (chanerr & IOAT_CHANERR_DIF_RES_GUARD_TAG_ERR) {
+			*desc->result |= DIF_CHECK_GUARD_RESULT;
+			err_handled |= IOAT_CHANERR_DIF_RES_GUARD_TAG_ERR;
+		}
+		if (chanerr & IOAT_CHANERR_DIF_RES_APP_TAG_ERR) {
+			*desc->result |= DIF_CHECK_APP_RESULT;
+			err_handled |= IOAT_CHANERR_DIF_RES_APP_TAG_ERR;
+		}
+		if (chanerr & IOAT_CHANERR_DIF_RES_REF_TAG_ERR) {
+			*desc->result |= DIF_CHECK_REF_RESULT;
+			err_handled |= IOAT_CHANERR_DIF_RES_REF_TAG_ERR;
+		}
+		break;
 	}
 
 	/* fault on unhandled error or spurious halt */
@@ -1590,7 +1863,7 @@ ioat3_prep_interrupt_lock(struct dma_chan *c, unsigned long flags)
 	return &desc->txd;
 }
 
-static void ioat_dif_set_sflags(struct ioat_dif_sdc *sdc, unsigned long cflags)
+static void ioat_dif_set_sflags(union ioat_dif_sdc *sdc, unsigned long cflags)
 {
 	sdc->tag_f_err_en = !!(cflags & DMA_PREP_DIFS_DETECT_ERR);
 	sdc->tag_f_en = !!(cflags & DMA_PREP_DIFS_IGNORE_DIF);
@@ -1602,7 +1875,7 @@ static void ioat_dif_set_sflags(struct ioat_dif_sdc *sdc, unsigned long cflags)
 	sdc->rtag_type = !!(cflags & DMA_PREP_DIFS_REF_TAG_FIXED);
 }
 
-static void ioat_dif_set_dflags(struct ioat_dif_ddc *ddc, unsigned long cflags)
+static void ioat_dif_set_dflags(union ioat_dif_ddc *ddc, unsigned long cflags)
 {
 	ddc->atag_type = !!(cflags & DMA_PREP_DIFD_APP_TAG_INC);
 	ddc->guard_dis = !!(cflags & DMA_PREP_DIFD_GUARD_DIS);
@@ -1651,7 +1924,7 @@ ioat3_prep_dif_gen_lock(struct dma_chan *c, sector_t blk_sz, dma_addr_t dma_src,
 		hw->ctl_f.dblk_sz = bsz;
 		hw->src_addr = src;
 		hw->dst_addr = dst;
-		ioat_dif_set_dflags(&hw->ddc_f, cflags);
+		ioat_dif_set_dflags(&hw->ddc, cflags);
 
 		hw->dst_tagc.app_tag = tag >> 48 & 0xffff;
 		hw->dst_tagc.app_mask = tag >> 32 & 0xffff;
@@ -1723,7 +1996,7 @@ ioat3_prep_dif_strip_lock(struct dma_chan *c, sector_t blk_sz,
 		else
 			hw->dst_addr = 0;
 
-		ioat_dif_set_sflags(&hw->sdc_f, cflags);
+		ioat_dif_set_sflags(&hw->sdc, cflags);
 
 		hw->src_tagc.app_tag = tag >> 48 & 0xffff;
 		hw->src_tagc.app_mask = tag >> 32 & 0xffff;
@@ -1789,8 +2062,8 @@ ioat3_prep_dif_update_lock(struct dma_chan *c, sector_t blk_sz,
 		hw->ctl_f.dblk_sz = bsz;
 		hw->src_addr = src;
 		hw->dst_addr = dst;
-		ioat_dif_set_dflags(&hw->ddc_f, cflags);
-		ioat_dif_set_sflags(&hw->sdc_f, cflags);
+		ioat_dif_set_dflags(&hw->ddc, cflags);
+		ioat_dif_set_sflags(&hw->sdc, cflags);
 
 		hw->src_tagc.app_tag = tags[DIF_SRC_IDX] >> 48 & 0xffff;
 		hw->src_tagc.app_mask = tags[DIF_SRC_IDX] >> 32 & 0xffff;
@@ -1815,6 +2088,315 @@ ioat3_prep_dif_update_lock(struct dma_chan *c, sector_t blk_sz,
 	/* we leave the channel locked to ensure in order submission */
 
 	return &desc->txd;
+}
+
+static struct dma_async_tx_descriptor *
+__ioat3_prep_pqdif_lock(struct dma_chan *c, enum sum_check_flags *result,
+			const dma_addr_t *dst, const dma_addr_t *src,
+			unsigned int src_cnt, const unsigned char *scf,
+			size_t len, sector_t blk_sz, unsigned long cflags,
+			u64 *tags, unsigned long flags)
+{
+	struct ioat2_dma_chan *ioat = to_ioat2_chan(c);
+	struct ioat_chan_common *chan = &ioat->base;
+	struct ioat_ring_ent *desc;
+	struct ioat_ring_ent *ext1;
+	struct ioat_ring_ent *ext2;
+	size_t total_len = len;
+	struct ioat_pqdif_descriptor *pqdif;
+	struct ioat_pqdif_ext1_descriptor *pqdif_ext1 = NULL;
+	struct ioat_pqdif_ext2_descriptor *pqdif_ext2 = NULL;
+	u32 offset = 0;
+	u8 op = result ? IOAT_OP_PQDIF_VAL : IOAT_OP_PQDIF;
+	u8 bsz;
+	int i, s, idx, with_ext, num_descs;
+
+	dev_dbg(to_dev(chan), "%s\n", __func__);
+	/* the engine requires at least two sources (we provide
+	 * at least 1 implied source in the DMA_PREP_CONTINUE case)
+	 */
+	BUG_ON(src_cnt + dmaf_continue(flags) < 2);
+
+	num_descs = ioat2_xferlen_to_descs(ioat, len);
+
+	bsz = _bytes_to_blksz(blk_sz);
+	if (bsz == 0xff) {
+		dev_warn(to_dev(chan), "Invalid block size: %lu\n", blk_sz);
+		return NULL;
+	}
+
+	/* we need 3x the number of descriptors to cover greater than 4
+	 * sources (we need 1 extra source in the q-only continuation
+	 * case and 3 extra sources in the p+q continuation case.
+	 */
+	if (src_cnt + dmaf_p_disabled_continue(flags) > 4 ||
+	    (dmaf_continue(flags) && !dmaf_p_disabled_continue(flags))) {
+		with_ext = 1;
+		num_descs *= 3;
+	} else {
+		/* we still need 2x descriptors because of DIF */
+		with_ext = 0;
+		num_descs *= 2;
+	}
+
+	if (num_descs && ioat2_check_space_lock(ioat, num_descs) == 0)
+		idx = ioat->head;
+	else
+		return NULL;
+	i = 0;
+	do {
+		struct ioat_raw_descriptor *descs[3];
+		size_t xfer_size = min_t(size_t, len, 1 << ioat->xfercap_log);
+
+		desc = ioat2_get_ring_ent(ioat, idx + i);
+		pqdif = desc->pqdif;
+
+		/* save a branch by unconditionally retrieving the
+		 * extended descriptor pqdif_set_src() knows to not write
+		 * to it in the single descriptor case
+		 */
+		ext1 = ioat2_get_ring_ent(ioat, idx + i + 1);
+		pqdif_ext1 = ext1->pqdif_ext1;
+		ext2 = ioat2_get_ring_ent(ioat, idx + i + 1 + with_ext);
+		pqdif_ext2 = ext2->pqdif_ext2;
+
+		descs[0] = (struct ioat_raw_descriptor *) pqdif;
+		descs[1] = (struct ioat_raw_descriptor *) pqdif_ext1;
+		descs[2] = (struct ioat_raw_descriptor *) pqdif_ext2;
+
+		for (s = 0; s < src_cnt; s++)
+			ioat_dif_set_sflags(&pqdif_ext1->sdc[s], cflags);
+
+		for (s = 0; s < src_cnt; s++)
+			pqdif_set_src(descs, src[s], offset, scf[s], tags[s], s);
+
+		/* see the comment for dma_maxpq in include/linux/dmaengine.h */
+		if (dmaf_p_disabled_continue(flags)) {
+			pqdif_set_src(descs, dst[1], offset, 1, tags[s], s);
+			s++;
+		} else if (dmaf_continue(flags)) {
+			pqdif_set_src(descs, dst[0], offset, 0, tags[s], s);
+			s++;
+			pqdif_set_src(descs, dst[1], offset, 1, tags[s], s);
+			s++;
+			pqdif_set_src(descs, dst[1], offset, 0, tags[s], s);
+			s++;
+		}
+
+		pqdif->size = xfer_size;
+		pqdif->p_addr = dst[0] + offset;
+		pqdif->q_addr = dst[1] + offset;
+		pqdif->ctl = 0;
+		pqdif->ctl_f.dblk_sz = bsz;
+		pqdif->ctl_f.op = op;
+		pqdif->ctl_f.wb_en = result ? 1 : 0;
+		pqdif->ctl_f.src_cnt = src_cnt_to_hw(s);
+		pqdif->ctl_f.p_disable = !!(flags & DMA_PREP_PQ_DISABLE_P);
+		pqdif->ctl_f.q_disable = !!(flags & DMA_PREP_PQ_DISABLE_Q);
+
+		len -= xfer_size;
+		offset += xfer_size;
+	} while ((i += 2 + with_ext) < num_descs);
+
+	/* last pq descriptor carries the unmap parameters and fence bit */
+	desc->txd.flags = flags;
+	desc->len = total_len;
+	if (result)
+		desc->result = result;
+	pqdif->ctl_f.fence = !!(flags & DMA_PREP_FENCE);
+	pqdif->ctl_f.int_en = !!(flags & DMA_PREP_INTERRUPT);
+	pqdif->ctl_f.compl_write = 1;
+
+	dump_pq_desc_dbg(ioat, desc, ext1);
+
+	/* we leave the channel locked to ensure in order submission */
+	return &desc->txd;
+}
+
+static struct dma_async_tx_descriptor *
+__ioat3_prep_pqdif16_lock(struct dma_chan *c, enum sum_check_flags *result,
+			  const dma_addr_t *dst, const dma_addr_t *src,
+			  unsigned int src_cnt, const unsigned char *scf,
+			  size_t len, sector_t blk_sz, unsigned long cflags,
+			  u64 *tags, unsigned long flags)
+{
+	struct ioat2_dma_chan *ioat = to_ioat2_chan(c);
+	struct ioat_chan_common *chan = &ioat->base;
+	struct ioat_ring_ent *desc;
+	size_t total_len = len;
+	struct ioat_pqdif_descriptor *pqdif;
+	struct ioat_pqdif16_sed_descriptor *pqdif_sed = NULL;
+	u32 offset = 0;
+	u8 op, bsz;
+	int i, s, idx, num_descs;
+
+	op = result ? IOAT_OP_PQ_VAL_16S : IOAT_OP_PQ_16S;
+
+	dev_dbg(to_dev(chan), "%s\n", __func__);
+	/* the engine requires at least two sources (we provide
+	 * at least 1 implied source in the DMA_PREP_CONTINUE case)
+	 */
+	BUG_ON(src_cnt + dmaf_continue(flags) < 2);
+
+	num_descs = ioat2_xferlen_to_descs(ioat, len);
+
+	bsz = _bytes_to_blksz(blk_sz);
+	if (bsz == 0xff) {
+		dev_warn(to_dev(chan), "Invalid block size: %lu\n", blk_sz);
+		return NULL;
+	}
+
+	if (num_descs && ioat2_check_space_lock(ioat, num_descs) == 0)
+		idx = ioat->head;
+	else
+		return NULL;
+
+	i = 0;
+
+	do {
+		struct ioat_raw_descriptor *descs[6];
+		size_t xfer_size = min_t(size_t, len, 1 << ioat->xfercap_log);
+
+		desc = ioat2_get_ring_ent(ioat, idx + i);
+		pqdif = desc->pqdif;
+
+		descs[0] = (struct ioat_raw_descriptor *)pqdif;
+
+		desc->sed = ioat3_get_difsed(ioat);
+		if (!desc->sed)
+			return NULL;
+
+		pqdif->sed_addr = desc->sed->dma;
+
+		desc->sed->parent = desc;
+
+		pqdif_sed = (struct ioat_pqdif16_sed_descriptor *)desc->sed->hw;
+
+		for (s = 1; s < 6; s++)
+			descs[s] = (struct ioat_raw_descriptor *)desc->sed->hw + s;
+
+		for (s = 0; s < src_cnt; s++)
+			ioat_dif_set_sflags(&pqdif_sed->sdc[s], cflags);
+
+		for (s = 0; s < src_cnt; s++)
+			pqdif16_set_src(descs, src[s], offset, scf[s], tags[s], s);
+
+		/* see the comment for dma_maxpq in include/linux/dmaengine.h */
+		if (dmaf_p_disabled_continue(flags)) {
+			pqdif16_set_src(descs, dst[0], offset, 0, tags[s], s);
+			s++;
+		} else if (dmaf_continue(flags)) {
+			pqdif16_set_src(descs, dst[0], offset, 0, tags[s], s);
+			s++;
+			pqdif16_set_src(descs, dst[1], offset, 1, tags[s], s);
+			s++;
+			pqdif16_set_src(descs, dst[1], offset, 0, tags[s], s);
+			s++;
+		}
+
+		pqdif->size = xfer_size;
+		pqdif->p_addr = dst[0] + offset;
+		pqdif->q_addr = dst[1] + offset;
+		pqdif->ctl = 0;
+		pqdif->ctl_f.dblk_sz = bsz;
+		pqdif->ctl_f.op = op;
+		pqdif->ctl_f.wb_en = result ? 1 : 0;
+		pqdif->ctl_f.src_cnt = src_cnt_to_hw(s);
+		pqdif->ctl_f.p_disable = !!(flags & DMA_PREP_PQ_DISABLE_P);
+		pqdif->ctl_f.q_disable = !!(flags & DMA_PREP_PQ_DISABLE_Q);
+
+		len -= xfer_size;
+		offset += xfer_size;
+	} while ((i += 1) < num_descs);
+
+	/* last pq descriptor carries the unmap parameters and fence bit */
+	desc->txd.flags = flags;
+	desc->len = total_len;
+	if (result)
+		desc->result = result;
+	pqdif->ctl_f.fence = !!(flags & DMA_PREP_FENCE);
+
+	/* with cb3.3 we should be able to do completion w/o a null desc */
+	pqdif->ctl_f.int_en = !!(flags & DMA_PREP_INTERRUPT);
+	pqdif->ctl_f.compl_write = 1;
+
+	dump_pq_desc_dbg(ioat, desc, NULL);
+
+	/* we leave the channel locked to ensure in order submission */
+	return &desc->txd;
+}
+
+static struct dma_async_tx_descriptor *
+ioat3_prep_pqdif(struct dma_chan *chan, dma_addr_t *dst, dma_addr_t *src,
+		 unsigned int src_cnt, const unsigned char *scf, size_t len,
+		 sector_t blk_sz, unsigned long cflags, u64 *tags,
+		 unsigned long flags)
+{
+	struct dma_device *dma = chan->device;
+
+	/* specify valid address for disabled result */
+	if (flags & DMA_PREP_PQ_DISABLE_P)
+		dst[0] = dst[1];
+	if (flags & DMA_PREP_PQ_DISABLE_Q)
+		dst[1] = dst[0];
+
+	/* handle the single source multiply case from the raid6
+	 * recovery path
+	 */
+	if ((flags & DMA_PREP_PQ_DISABLE_P) && src_cnt == 1) {
+		dma_addr_t single_source[2];
+		unsigned char single_source_coef[2];
+
+		BUG_ON(flags & DMA_PREP_PQ_DISABLE_Q);
+		single_source[0] = src[0];
+		single_source[1] = src[0];
+		single_source_coef[0] = scf[0];
+		single_source_coef[1] = 0;
+
+		return (src_cnt >= 8) && (dma->max_pq > 8) ?
+			__ioat3_prep_pqdif16_lock(chan, NULL, dst,
+						  single_source, 2,
+						  single_source_coef, len,
+						  blk_sz, cflags, tags, flags) :
+			__ioat3_prep_pqdif_lock(chan, NULL, dst, single_source,
+						2, single_source_coef, len,
+						blk_sz, cflags, tags, flags);
+
+	} else {
+		return (src_cnt >= 8) && (dma->max_pq > 8) ?
+			__ioat3_prep_pqdif16_lock(chan, NULL, dst, src, src_cnt,
+						  scf, len, blk_sz, cflags,
+						  tags, flags) :
+			__ioat3_prep_pqdif_lock(chan, NULL, dst, src, src_cnt,
+						scf, len, blk_sz, cflags, tags,
+						flags);
+	}
+}
+
+struct dma_async_tx_descriptor *
+ioat3_prep_pqdif_val(struct dma_chan *chan, dma_addr_t *pq, dma_addr_t *src,
+		     unsigned int src_cnt, const unsigned char *scf, size_t len,
+		     sector_t blk_sz, unsigned long cflags, u64 *tags,
+		     enum sum_check_flags *pqres, unsigned long flags)
+{
+	struct dma_device *dma = chan->device;
+
+	/* specify valid address for disabled result */
+	if (flags & DMA_PREP_PQ_DISABLE_P)
+		pq[0] = pq[1];
+	if (flags & DMA_PREP_PQ_DISABLE_Q)
+		pq[1] = pq[0];
+
+	/* the cleanup routine only sets bits on validate failure, it
+	 * does not clear bits on validate success... so clear it here
+	 */
+	*pqres = 0;
+
+	return (src_cnt >= 8) && (dma->max_pq > 8) ?
+		__ioat3_prep_pqdif16_lock(chan, pqres, pq, src, src_cnt, scf,
+					  len, blk_sz, cflags, tags, flags) :
+		__ioat3_prep_pqdif_lock(chan, pqres, pq, src, src_cnt, scf, len,
+					blk_sz, cflags, tags, flags);
 }
 
 static void __devinit ioat3_dma_test_callback(void *dma_async_param)
@@ -2340,6 +2922,13 @@ int __devinit ioat3_dma_probe(struct ioatdma_device *device, int dca)
 		dma->device_prep_dif_insert = ioat3_prep_dif_gen_lock;
 		dma->device_prep_dif_strip = ioat3_prep_dif_strip_lock;
 		dma->device_prep_dif_update = ioat3_prep_dif_update_lock;
+	}
+
+	if (cap & IOAT_CAP_RAID16_DIF) {
+		dma_cap_set(DMA_PQ_DIF, dma->cap_mask);
+		dma_cap_set(DMA_PQ_VAL_DIF, dma->cap_mask);
+		dma->device_prep_pqdif = ioat3_prep_pqdif;
+		dma->device_prep_pqdif_val = ioat3_prep_pqdif_val;
 	}
 
 	if (is_raid_device) {
