@@ -129,6 +129,7 @@ struct ioat_ring_ent {
 		struct ioat_pq_descriptor *pq;
 		struct ioat_pq_ext_descriptor *pq_ex;
 		struct ioat_pq_update_descriptor *pqu;
+		struct ioat_mcast_descriptor *mcast;
 		struct ioat_raw_descriptor *raw;
 	};
 	size_t len;

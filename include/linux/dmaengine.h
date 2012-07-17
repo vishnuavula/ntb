@@ -72,6 +72,7 @@ enum dma_transaction_type {
 	DMA_PRIVATE,
 	DMA_ASYNC_TX,
 	DMA_SLAVE,
+	DMA_MCAST,
 	DMA_CYCLIC,
 	DMA_INTERLEAVE,
 /* last transaction type for creation of the capabilities mask */
@@ -572,6 +573,9 @@ struct dma_device {
 	struct dma_async_tx_descriptor *(*device_prep_dma_memset)(
 		struct dma_chan *chan, dma_addr_t dest, int value, size_t len,
 		unsigned long flags);
+	struct dma_async_tx_descriptor *(*device_prep_dma_mcast)(
+		struct dma_chan *chan, dma_addr_t *dest, int dest_num,
+		dma_addr_t src, size_t len, unsigned long flags);
 	struct dma_async_tx_descriptor *(*device_prep_dma_interrupt)(
 		struct dma_chan *chan, unsigned long flags);
 	struct dma_async_tx_descriptor *(*device_prep_dma_sg)(
