@@ -849,6 +849,8 @@ ioat3_prep_mcast_lock(struct dma_chan *c, dma_addr_t *dma_dest,
 	if (dest_num < 1)
 		return NULL;
 
+	WARN_ONCE(dest_num > 2, "IOAT DMA multicast dests > 2, BWD limitation");
+
 	num_descs = ioat2_xferlen_to_descs(ioat, len);
 	if (num_descs && ioat2_check_space_lock(ioat, num_descs) == 0)
 		idx = ioat->head;
