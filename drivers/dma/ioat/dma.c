@@ -1039,6 +1039,12 @@ int __devinit ioat_probe(struct ioatdma_device *device)
 	if (err)
 		goto err_setup_interrupts;
 
+	if (device->init_device) {
+		err = device->init_device(device);
+		if (err)
+			goto err_self_test;
+	}
+
 	err = device->self_test(device);
 	if (err)
 		goto err_self_test;
