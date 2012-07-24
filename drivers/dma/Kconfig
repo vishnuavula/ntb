@@ -62,8 +62,6 @@ config INTEL_IOATDMA
 	depends on PCI && X86
 	select DMA_ENGINE
 	select DCA
-	select ASYNC_TX_DISABLE_PQ_VAL_DMA
-	select ASYNC_TX_DISABLE_XOR_VAL_DMA
 	help
 	  Enable support for the Intel(R) I/OAT DMA engine present
 	  in recent Intel Xeon chipsets.
@@ -71,6 +69,12 @@ config INTEL_IOATDMA
 	  Say Y here if you have such a chipset.
 
 	  If unsure, say N.
+
+config INTEL_IOATDMA_LEGACY
+	bool "Support IOATDMA 3.2 or older"
+	depends on INTEL_IOATDMA
+	select ASYNC_TX_DISABLE_PQ_VAL_DMA
+	select ASYNC_TX_DISABLE_XOR_VAL_DMA
 
 config INTEL_IOP_ADMA
 	tristate "Intel IOP ADMA support"
