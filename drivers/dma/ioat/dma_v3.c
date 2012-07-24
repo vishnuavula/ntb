@@ -299,6 +299,28 @@ ioat3_put_sed_ent(struct ioatdma_device *device, struct ioat_sed_ent *sed)
 	spin_unlock_bh(&device->sed_lock);
 }
 
+static u8 _bytes_to_blksz(sector_t blk_sz)
+{
+	switch (blk_sz) {
+		case 512: return 0;
+		case 520: return 1;
+		case 4096: return 2;
+		case 4104: return 3;
+		default: return 0xff;
+	}
+}
+
+static unsigned int _blksz_to_bytes(u8 size)
+{
+	switch (size) {
+		case 0: return 512;
+		case 1: return 520;
+		case 2: return 4096;
+		case 3: return 4104;
+		default: return 0;
+	}
+}
+
 static void ioat3_dma_unmap(struct ioat2_dma_chan *ioat,
 			    struct ioat_ring_ent *desc, int idx)
 {
@@ -477,6 +499,46 @@ static void ioat3_dma_unmap(struct ioat2_dma_chan *ioat,
 		}
 		break;
 	}
+	case IOAT_OP_DIF_IN:
+	case IOAT_OP_DIF_ST:
+	case IOAT_OP_DIF_UP:
+	{
+		struct ioat_dif_update_descriptor *dif =
+			(struct ioat_dif_update_descriptor *)desc->hw;
+
+		if (!(flags & DMA_COMPL_SKIP_SRC_UNMAP))
+			ioat_unmap(pdev, dif->src_addr - offset, len,
+				   PCI_DMA_TODEVICE, flags, 0);
+
+		if (!(flags & DMA_COMPL_SKIP_DEST_UNMAP)) {
+			size_t size = len;
+
+			/* DIF insert */
+			if (desc->hw->ctl_f.op == IOAT_OP_DIF_IN) {
+				/*
+				 * need to calculate the destination address
+				 * with the size of DIF data
+				 * TS = TS + (TS / BLKSZ) * 8
+				 */
+				size = size + ((size /
+					_blksz_to_bytes(dif->ctl_f.dblk_sz))
+					<< 3);
+			}
+
+			/* DIF strip */
+			if (desc->hw->ctl_f.op == IOAT_OP_DIF_ST) {
+				/* TS = TS - (TS / (BLKSZ + 8)) * 8 */
+				size = size - (size /
+					((_blksz_to_bytes(dif->ctl_f.dblk_sz) +
+					 8)) << 3);
+			}
+
+			ioat_unmap(pdev, dif->dst_addr - offset, size,
+				   PCI_DMA_FROMDEVICE, flags, 0);
+		}
+
+		break;
+	}
 	default:
 		dev_err(&pdev->dev, "%s: unknown op type: %#x\n",
 			__func__, desc->hw->ctl_f.op);
@@ -549,6 +611,27 @@ static void desc_get_errstat(struct ioat_ring_ent *desc)
 
 			if (pq->dwbes_f.q_val_err)
 				*desc->result |= SUM_CHECK_Q_RESULT;
+			return;
+		}
+		case IOAT_OP_DIF_ST:
+		{
+			struct ioat_dif_strip_descriptor *dif = desc->difs;
+
+			if (!dif->dwbes_f.wbes)
+				return;
+
+			if (dif->dwbes_f.chk_guard_err)
+				*desc->result |= DIF_CHECK_GUARD_RESULT;
+
+			if (dif->dwbes_f.chk_app_err)
+				*desc->result |= DIF_CHECK_APP_RESULT;
+
+			if (dif->dwbes_f.chk_ref_err)
+				*desc->result |= DIF_CHECK_REF_RESULT;
+
+			if (dif->dwbes_f.f_tag_err)
+				*desc->result |= DIF_CHECK_FTAG_RESULT;
+
 			return;
 		}
 		default:
@@ -723,6 +806,26 @@ static void ioat3_eh(struct ioat2_dma_chan *ioat)
 			err_handled |= IOAT_CHANERR_XOR_Q_ERR;
 		}
 		break;
+	case IOAT_OP_DIF_ST:
+		if (chanerr & IOAT_CHANERR_DIF_RES_ALL_F_ERR) {
+			*desc->result |= DIF_CHECK_FTAG_RESULT;
+			err_handled |= IOAT_CHANERR_DIF_RES_ALL_F_ERR;
+		}
+
+		if (chanerr & IOAT_CHANERR_DIF_RES_GUARD_TAG_ERR) {
+			*desc->result |= DIF_CHECK_GUARD_RESULT;
+			err_handled |= IOAT_CHANERR_DIF_RES_GUARD_TAG_ERR;
+		}
+
+		if (chanerr & IOAT_CHANERR_DIF_RES_APP_TAG_ERR) {
+			*desc->result |= DIF_CHECK_APP_RESULT;
+			err_handled |= IOAT_CHANERR_DIF_RES_APP_TAG_ERR;
+		}
+
+		if (chanerr & IOAT_CHANERR_DIF_RES_REF_TAG_ERR) {
+			*desc->result |= DIF_CHECK_REF_RESULT;
+			err_handled |= IOAT_CHANERR_DIF_RES_REF_TAG_ERR;
+		}
 	}
 
 	/* fault on unhandled error or spurious halt */
@@ -1487,6 +1590,233 @@ ioat3_prep_interrupt_lock(struct dma_chan *c, unsigned long flags)
 	return &desc->txd;
 }
 
+static void ioat_dif_set_sflags(struct ioat_dif_sdc *sdc, unsigned long cflags)
+{
+	sdc->tag_f_err_en = !!(cflags & DMA_PREP_DIFS_DETECT_ERR);
+	sdc->tag_f_en = !!(cflags & DMA_PREP_DIFS_IGNORE_DIF);
+	sdc->app_tag_f_en = !!(cflags & DMA_PREP_DIFS_IGNORE_GRTAG);
+	sdc->app_ref_tag_f_en = !!(cflags & DMA_PREP_DIFS_IGNORE_GTAG);
+	sdc->atag_type = !!(cflags & DMA_PREP_DIFS_APP_TAG_INC);
+	sdc->guard_dis = !!(cflags & DMA_PREP_DIFS_GUARD_DIS);
+	sdc->rtag_dis = !!(cflags & DMA_PREP_DIFS_REF_TAG_DIS);
+	sdc->rtag_type = !!(cflags & DMA_PREP_DIFS_REF_TAG_FIXED);
+}
+
+static void ioat_dif_set_dflags(struct ioat_dif_ddc *ddc, unsigned long cflags)
+{
+	ddc->atag_type = !!(cflags & DMA_PREP_DIFD_APP_TAG_INC);
+	ddc->guard_dis = !!(cflags & DMA_PREP_DIFD_GUARD_DIS);
+	ddc->rtag_dis = !!(cflags & DMA_PREP_DIFD_REF_TAG_DIS);
+	ddc->rtag_type = !!(cflags & DMA_PREP_DIFD_REF_TAG_FIXED);
+}
+
+static struct dma_async_tx_descriptor *
+ioat3_prep_dif_gen_lock(struct dma_chan *c, sector_t blk_sz, dma_addr_t dma_src,
+			dma_addr_t dma_dest, size_t len, u64 tag,
+			unsigned long cflags, unsigned long flags)
+{
+	struct ioat2_dma_chan *ioat = to_ioat2_chan(c);
+	struct ioat_chan_common *chan = &ioat->base;
+	struct ioat_ring_ent *desc;
+	struct ioat_dif_gen_descriptor *hw;
+	struct device *dev = &chan->device->pdev->dev;
+	dma_addr_t dst = dma_dest;
+	dma_addr_t src = dma_src;
+	int num_descs, i, idx;
+	size_t total_len = len;
+	u8 bsz;
+
+	num_descs = ioat2_xferlen_to_descs(ioat, len);
+	if (ioat2_check_space_lock(ioat, 1) == 0)
+		idx = ioat->head;
+	else
+		return NULL;
+
+	bsz = _bytes_to_blksz(blk_sz);
+	if (bsz == 0xff) {
+		dev_warn(dev, "Invalid block size: %lu\n", blk_sz);
+		return NULL;
+	}
+
+	i = 0;
+	do {
+		size_t xfer = min_t(size_t, len, 1 << ioat->xfercap_log);
+
+		desc = ioat2_get_ring_ent(ioat, idx + i);
+		hw = desc->difg;
+
+		hw->ctl = 0;
+		hw->ctl_f.op = IOAT_OP_DIF_IN;
+		hw->size = xfer;
+		hw->ctl_f.dblk_sz = bsz;
+		hw->src_addr = src;
+		hw->dst_addr = dst;
+		ioat_dif_set_dflags(&hw->ddc_f, cflags);
+
+		hw->dst_tagc.app_tag = tag >> 48 & 0xffff;
+		hw->dst_tagc.app_mask = tag >> 32 & 0xffff;
+		hw->dst_tagc.ref_tag_seed = tag & 0xffffffff;
+
+		len -= xfer;
+		dst += xfer;
+		src += xfer;
+
+		dump_desc_dbg(ioat, desc);
+	} while (++i < num_descs);
+
+	desc->txd.flags = flags;
+	desc->len = total_len;
+	hw->ctl_f.int_en = !!(flags & DMA_PREP_INTERRUPT);
+	hw->ctl_f.fence = !!(flags & DMA_PREP_FENCE);
+	hw->ctl_f.compl_write = 1;
+	dump_desc_dbg(ioat, desc);
+	/* we leave the channel locked to ensure in order submission */
+
+	return &desc->txd;
+}
+
+static struct dma_async_tx_descriptor *
+ioat3_prep_dif_strip_lock(struct dma_chan *c, sector_t blk_sz,
+			  dma_addr_t dma_src, dma_addr_t dma_dest, size_t len,
+			  u64 tag, unsigned long cflags, unsigned long flags)
+{
+	struct ioat2_dma_chan *ioat = to_ioat2_chan(c);
+	struct ioat_chan_common *chan = &ioat->base;
+	struct ioat_ring_ent *desc;
+	struct ioat_dif_strip_descriptor *hw;
+	struct device *dev = &chan->device->pdev->dev;
+	dma_addr_t dst = dma_dest;
+	dma_addr_t src = dma_src;
+	int num_descs, i, idx;
+	size_t total_len = len;
+	u8 bsz;
+
+	num_descs = ioat2_xferlen_to_descs(ioat, len);
+	if (ioat2_check_space_lock(ioat, 1) == 0)
+		idx = ioat->head;
+	else
+		return NULL;
+
+	bsz = _bytes_to_blksz(blk_sz);
+	if (bsz == 0xff) {
+		dev_warn(dev, "Invalid block size: %lu\n", blk_sz);
+		return NULL;
+	}
+
+	i = 0;
+	do {
+		size_t xfer = min_t(size_t, len, 1 << ioat->xfercap_log);
+
+		desc = ioat2_get_ring_ent(ioat, idx + i);
+		hw = desc->difs;
+
+		hw->ctl = 0;
+		hw->ctl_f.op = IOAT_OP_DIF_ST;
+		hw->size = xfer;
+		hw->ctl_f.wb_en = 1;
+		hw->ctl_f.dblk_sz = bsz;
+		hw->src_addr = src;
+
+		hw->ctl_f.dst_cpy_dis = !!(flags & DMA_PREP_DEST_DISABLE);
+		if (!hw->ctl_f.dst_cpy_dis)
+			hw->dst_addr = dst;
+		else
+			hw->dst_addr = 0;
+
+		ioat_dif_set_sflags(&hw->sdc_f, cflags);
+
+		hw->src_tagc.app_tag = tag >> 48 & 0xffff;
+		hw->src_tagc.app_mask = tag >> 32 & 0xffff;
+		hw->src_tagc.ref_tag_seed = tag & 0xffffffff;
+
+		len -= xfer;
+		dst += xfer;
+		src += xfer;
+
+		dump_desc_dbg(ioat, desc);
+	} while (++i < num_descs);
+
+	desc->txd.flags = flags;
+	desc->len = total_len;
+	hw->ctl_f.int_en = !!(flags & DMA_PREP_INTERRUPT);
+	hw->ctl_f.fence = !!(flags & DMA_PREP_FENCE);
+	hw->ctl_f.compl_write = 1;
+	dump_desc_dbg(ioat, desc);
+	/* we leave the channel locked to ensure in order submission */
+
+	return &desc->txd;
+}
+
+static struct dma_async_tx_descriptor *
+ioat3_prep_dif_update_lock(struct dma_chan *c, sector_t blk_sz,
+			   dma_addr_t dma_src, dma_addr_t dma_dest, size_t len,
+			   u64 *tags, unsigned long cflags,
+			   unsigned long flags)
+{
+	struct ioat2_dma_chan *ioat = to_ioat2_chan(c);
+	struct ioat_chan_common *chan = &ioat->base;
+	struct ioat_ring_ent *desc;
+	struct ioat_dif_update_descriptor *hw;
+	struct device *dev = &chan->device->pdev->dev;
+	dma_addr_t dst = dma_dest;
+	dma_addr_t src = dma_src;
+	int num_descs, i, idx;
+	size_t total_len = len;
+	u8 bsz;
+
+	num_descs = ioat2_xferlen_to_descs(ioat, len);
+	if (ioat2_check_space_lock(ioat, 1) == 0)
+		idx = ioat->head;
+	else
+		return NULL;
+
+	bsz = _bytes_to_blksz(blk_sz);
+	if (bsz == 0xff) {
+		dev_warn(dev, "Invalid block size: %lu\n", blk_sz);
+		return NULL;
+	}
+
+	i = 0;
+	do {
+		size_t xfer = min_t(size_t, len, 1 << ioat->xfercap_log);
+
+		desc = ioat2_get_ring_ent(ioat, idx + i);
+		hw = desc->difu;
+
+		hw->ctl = 0;
+		hw->ctl_f.op = IOAT_OP_DIF_UP;
+		hw->size = xfer;
+		hw->ctl_f.dblk_sz = bsz;
+		hw->src_addr = src;
+		hw->dst_addr = dst;
+		ioat_dif_set_dflags(&hw->ddc_f, cflags);
+		ioat_dif_set_sflags(&hw->sdc_f, cflags);
+
+		hw->src_tagc.app_tag = tags[DIF_SRC_IDX] >> 48 & 0xffff;
+		hw->src_tagc.app_mask = tags[DIF_SRC_IDX] >> 32 & 0xffff;
+		hw->src_tagc.ref_tag_seed = tags[DIF_SRC_IDX] & 0xffffffff;
+		hw->dst_tagc.app_tag = tags[DIF_DST_IDX] >> 48 & 0xffff;
+		hw->dst_tagc.app_mask = tags[DIF_DST_IDX] >> 32 & 0xffff;
+		hw->dst_tagc.ref_tag_seed = tags[DIF_DST_IDX] & 0xffffffff;
+
+		len -= xfer;
+		dst += xfer;
+		src += xfer;
+
+		dump_desc_dbg(ioat, desc);
+	} while (++i < num_descs);
+
+	desc->txd.flags = flags;
+	desc->len = total_len;
+	hw->ctl_f.int_en = !!(flags & DMA_PREP_INTERRUPT);
+	hw->ctl_f.fence = !!(flags & DMA_PREP_FENCE);
+	hw->ctl_f.compl_write = 1;
+	dump_desc_dbg(ioat, desc);
+	/* we leave the channel locked to ensure in order submission */
+
+	return &desc->txd;
+}
+
 static void __devinit ioat3_dma_test_callback(void *dma_async_param)
 {
 	struct completion *cmp = dma_async_param;
@@ -2002,6 +2332,14 @@ int __devinit ioat3_dma_probe(struct ioatdma_device *device, int dca)
 	if (cap & IOAT_CAP_DMAMC) {
 		dma_cap_set(DMA_MCAST, dma->cap_mask);
 		dma->device_prep_dma_mcast = ioat3_prep_mcast_lock;
+	}
+
+	/* DIF support */
+	if (cap & IOAT_CAP_DIF) {
+		dma_cap_set(DMA_DIF, dma->cap_mask);
+		dma->device_prep_dif_insert = ioat3_prep_dif_gen_lock;
+		dma->device_prep_dif_strip = ioat3_prep_dif_strip_lock;
+		dma->device_prep_dif_update = ioat3_prep_dif_update_lock;
 	}
 
 	if (is_raid_device) {

@@ -73,6 +73,7 @@ enum dma_transaction_type {
 	DMA_ASYNC_TX,
 	DMA_SLAVE,
 	DMA_MCAST,
+	DMA_DIF,
 	DMA_CYCLIC,
 	DMA_INTERLEAVE,
 /* last transaction type for creation of the capabilities mask */
@@ -195,6 +196,22 @@ enum dma_ctrl_flags {
 	DMA_PREP_PQ_DISABLE_Q = (1 << 7),
 	DMA_PREP_CONTINUE = (1 << 8),
 	DMA_PREP_FENCE = (1 << 9),
+	DMA_PREP_DEST_DISABLE = (1 << 10),
+};
+
+enum dma_dif_ctrl_flags {
+	DMA_PREP_DIFS_DETECT_ERR = (1 << 0),
+	DMA_PREP_DIFS_IGNORE_DIF = (1 << 1),
+	DMA_PREP_DIFS_IGNORE_GRTAG = (1 << 2),
+	DMA_PREP_DIFS_IGNORE_GTAG = (1 << 3),
+	DMA_PREP_DIFS_APP_TAG_INC = (1 << 4),
+	DMA_PREP_DIFS_GUARD_DIS = (1 << 5),
+	DMA_PREP_DIFS_REF_TAG_DIS = (1 << 6),
+	DMA_PREP_DIFS_REF_TAG_FIXED = (1 << 7),
+	DMA_PREP_DIFD_APP_TAG_INC = ( 1 << 20),
+	DMA_PREP_DIFD_GUARD_DIS = (1 << 21),
+	DMA_PREP_DIFD_REF_TAG_DIS = (1 << 22),
+	DMA_PREP_DIFD_REF_TAG_FIXED = (1 << 23),
 };
 
 /**
@@ -225,6 +242,10 @@ enum dma_ctrl_cmd {
 enum sum_check_bits {
 	SUM_CHECK_P = 0,
 	SUM_CHECK_Q = 1,
+	DIF_CHECK_GUARD = 2,
+	DIF_CHECK_APP = 3,
+	DIF_CHECK_REF = 4,
+	DIF_CHECK_FTAG = 5,
 };
 
 /**
@@ -235,6 +256,10 @@ enum sum_check_bits {
 enum sum_check_flags {
 	SUM_CHECK_P_RESULT = (1 << SUM_CHECK_P),
 	SUM_CHECK_Q_RESULT = (1 << SUM_CHECK_Q),
+	DIF_CHECK_GUARD_RESULT = (1 << DIF_CHECK_GUARD),
+	DIF_CHECK_APP_RESULT = (1 << DIF_CHECK_APP),
+	DIF_CHECK_REF_RESULT = (1 << DIF_CHECK_REF),
+	DIF_CHECK_FTAG_RESULT = (1 << DIF_CHECK_FTAG),
 };
 
 
@@ -597,6 +622,19 @@ struct dma_device {
 		unsigned long flags);
 	int (*device_control)(struct dma_chan *chan, enum dma_ctrl_cmd cmd,
 		unsigned long arg);
+
+	struct dma_async_tx_descriptor *(*device_prep_dif_insert)(
+		struct dma_chan *chan, sector_t blk_sz, dma_addr_t dma_src,
+		dma_addr_t dma_dest, size_t len, u64 tag, unsigned long cflags,
+		unsigned long flags);
+	struct dma_async_tx_descriptor *(*device_prep_dif_strip)(
+		struct dma_chan *chan, sector_t blk_sz, dma_addr_t dma_src,
+		dma_addr_t dma_dest, size_t len, u64 tag, unsigned long cflags,
+		unsigned long flags);
+	struct dma_async_tx_descriptor *(*device_prep_dif_update)(
+		struct dma_chan *chan, sector_t blk_sz, dma_addr_t dma_src,
+		dma_addr_t dma_dest, size_t len, u64 *tags,
+		unsigned long cflags, unsigned long flags);
 
 	enum dma_status (*device_tx_status)(struct dma_chan *chan,
 					    dma_cookie_t cookie,
