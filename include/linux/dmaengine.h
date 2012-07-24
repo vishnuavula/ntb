@@ -74,6 +74,8 @@ enum dma_transaction_type {
 	DMA_SLAVE,
 	DMA_MCAST,
 	DMA_DIF,
+	DMA_PQ_DIF,
+	DMA_PQ_VAL_DIF,
 	DMA_CYCLIC,
 	DMA_INTERLEAVE,
 /* last transaction type for creation of the capabilities mask */
@@ -635,6 +637,16 @@ struct dma_device {
 		struct dma_chan *chan, sector_t blk_sz, dma_addr_t dma_src,
 		dma_addr_t dma_dest, size_t len, u64 *tags,
 		unsigned long cflags, unsigned long flags);
+	struct dma_async_tx_descriptor *(*device_prep_pqdif)(
+		struct dma_chan *chan, dma_addr_t *dst, dma_addr_t *src,
+		unsigned int src_cnt, const unsigned char *scf, size_t len,
+		sector_t blk_sz, unsigned long cflags, u64 *tags,
+		unsigned long flags);
+	struct dma_async_tx_descriptor *(*device_prep_pqdif_val)(
+		struct dma_chan *chan, dma_addr_t *pq, dma_addr_t *src,
+		unsigned int src_cnt, const unsigned char *scf, size_t len,
+		sector_t blk_sz, unsigned long cflags, u64 *tags,
+		enum sum_check_flags *pqres, unsigned long flags);
 
 	enum dma_status (*device_tx_status)(struct dma_chan *chan,
 					    dma_cookie_t cookie,

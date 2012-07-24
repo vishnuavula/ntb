@@ -134,6 +134,9 @@ struct ioat_ring_ent {
 		struct ioat_dif_gen_descriptor *difg;
 		struct ioat_dif_strip_descriptor *difs;
 		struct ioat_dif_update_descriptor *difu;
+		struct ioat_pqdif_descriptor *pqdif;
+		struct ioat_pqdif_ext1_descriptor *pqdif_ext1;
+		struct ioat_pqdif_ext2_descriptor *pqdif_ext2;
 	};
 	size_t len;
 	struct dma_async_tx_descriptor txd;

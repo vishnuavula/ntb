@@ -296,23 +296,29 @@ struct ioat_sed_raw_descriptor {
 	uint64_t	b[8];
 };
 
-struct ioat_dif_ddc {
-	uint8_t rsvd5:4;
-	uint8_t atag_type:1;
-	uint8_t guard_dis:1;
-	uint8_t rtag_dis:1;
-	uint8_t rtag_type:1;
+union ioat_dif_ddc {
+	uint8_t ddc;
+	struct {
+		uint8_t rsvd5:4;
+		uint8_t atag_type:1;
+		uint8_t guard_dis:1;
+		uint8_t rtag_dis:1;
+		uint8_t rtag_type:1;
+	};
 };
 
-struct ioat_dif_sdc {
-	uint8_t tag_f_err_en:1;
-	uint8_t tag_f_en:1;
-	uint8_t app_tag_f_en:1;
-	uint8_t app_ref_tag_f_en:1;
-	uint8_t atag_type:1;
-	uint8_t guard_dis:1;
-	uint8_t rtag_dis:1;
-	uint8_t rtag_type:1;
+union ioat_dif_sdc {
+	uint8_t sdc;
+	struct {
+		uint8_t tag_f_err_en:1;
+		uint8_t tag_f_en:1;
+		uint8_t app_tag_f_en:1;
+		uint8_t app_ref_tag_f_en:1;
+		uint8_t atag_type:1;
+		uint8_t guard_dis:1;
+		uint8_t rtag_dis:1;
+		uint8_t rtag_type:1;
+	};
 };
 
 struct ioat_dif_tagc {
@@ -344,10 +350,7 @@ struct ioat_dif_gen_descriptor {
 	uint64_t		dst_addr;
 	uint64_t		next;
 	uint8_t			rsvd4[7];
-	union {
-		uint8_t ddc;
-		struct ioat_dif_ddc ddc_f;
-	};
+	union ioat_dif_ddc	ddc;
 	uint64_t		rsvd7[2];
 	struct ioat_dif_tagc	dst_tagc;
 };
@@ -358,11 +361,11 @@ struct ioat_dif_strip_descriptor {
 		uint32_t	dwbe_sts;
 		struct {
 			unsigned int rsvd0:27;
-			unsigned int f_tag_err;
-			unsigned int chk_ref_err;
-			unsigned int chk_app_err;
-			unsigned int chk_guard_err;
-			unsigned int wbes;
+			unsigned int f_tag_err:1;
+			unsigned int chk_ref_err:1;
+			unsigned int chk_app_err:1;
+			unsigned int chk_guard_err:1;
+			unsigned int wbes:1;
 		} dwbes_f;
 	};
 	union {
@@ -387,10 +390,7 @@ struct ioat_dif_strip_descriptor {
 	uint64_t		src_addr;
 	uint64_t		dst_addr;
 	uint64_t		next;
-	union {
-		uint8_t sdc;
-		struct ioat_dif_sdc sdc_f;
-	};
+	union ioat_dif_sdc	sdc;
 	uint8_t			rsvd4[7];
 	uint64_t		rsvd7;
 	struct ioat_dif_tagc	src_tagc;
@@ -419,17 +419,96 @@ struct ioat_dif_update_descriptor {
 	uint64_t		src_addr;
 	uint64_t		dst_addr;
 	uint64_t		next;
-	union {
-		uint8_t sdc;
-		struct ioat_dif_sdc sdc_f;
-	};
+	union ioat_dif_sdc	sdc;
 	uint8_t			rsvd4[6];
-	union {
-		uint8_t ddc;
-		struct ioat_dif_ddc ddc_f;
-	};
+	union ioat_dif_ddc	ddc;
 	uint64_t		rsvd7;
 	struct ioat_dif_tagc	src_tagc;
 	struct ioat_dif_tagc	dst_tagc;
 };
+
+struct ioat_pqdif_descriptor {
+	union {
+		uint32_t	size;
+		uint32_t	dwbe_sts;
+		struct {
+			unsigned int derr_src_id:8;
+			unsigned int rsvd0:17;
+			unsigned int p_val_err:1;
+			unsigned int q_val_err:1;
+			unsigned int f_tag_err:1;
+			unsigned int chk_ref_err:1;
+			unsigned int chk_app_err:1;
+			unsigned int chk_guard_err:1;
+			unsigned int wbes:1;
+		} dwbes_f;
+	};
+	union {
+		uint32_t ctl;
+		struct {
+			unsigned int int_en:1;
+			unsigned int src_snoop_dis:1;
+			unsigned int dest_snoop_dis:1;
+			unsigned int compl_write:1;
+			unsigned int fence:1;
+			unsigned int src_cnt:3;
+			unsigned int bundle:1;
+			unsigned int rsvd:2;
+			unsigned int p_disable:1;
+			unsigned int q_disable:1;
+			unsigned int dblk_sz:2;
+			unsigned int wb_en:1;
+			unsigned int rsvd3:8;
+			#define IOAT_OP_PQDIF 0x8c
+			#define IOAT_OP_PQDIF_VAL 0x8d
+			#define IOAT_OP_PQDIF_16S 0xa2
+			#define IOAT_OP_PQDIF_VAL_16S 0xa3
+			unsigned int op:8;
+		} ctl_f;
+	};
+	uint64_t	src_addr;
+	uint64_t	p_addr;
+	uint64_t	next;
+	uint64_t	src_addr2;
+	union {
+		uint64_t	src_addr3;
+		uint64_t	sed_addr;
+	};
+	uint8_t		coef[8];
+	uint64_t	q_addr;
+};
+
+struct ioat_pqdif_tagaddr_grp {
+	struct ioat_dif_tagc	src_tagc;
+	uint64_t		src_addr;
+};
+
+struct ioat_pqdif_ext1_descriptor {
+	union ioat_dif_sdc		sdc[8];
+	struct ioat_dif_tagc		src_tagc1;
+	struct ioat_dif_tagc		src_tagc2;
+	uint64_t			next;
+	struct ioat_dif_tagc		src_tagc3;
+	struct ioat_pqdif_tagaddr_grp	tag4;
+	struct ioat_dif_tagc		src_tagc5;
+};
+
+struct ioat_pqdif_ext2_descriptor {
+	uint64_t			src_addr5;
+	struct ioat_pqdif_tagaddr_grp	tag6;
+	uint64_t			next;
+	struct ioat_pqdif_tagaddr_grp	tag7_8[2];
+};
+
+struct ioat_pqdif16_sed_descriptor {
+	uint8_t				coef[8];
+	union ioat_dif_sdc		sdc[16];
+	struct ioat_dif_tagc		src_tagc[2];
+	struct ioat_pqdif_tagaddr_grp	tag3;
+	uint64_t			rsvd;
+
+	struct ioat_pqdif_tagaddr_grp	tag4_16[13];
+	uint64_t			rsvd1[6];
+};
+
 #endif
