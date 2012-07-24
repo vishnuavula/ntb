@@ -204,15 +204,23 @@ static inline u64 ioat_chansts(struct ioat_chan_common *chan)
 {
 	u8 ver = chan->device->version;
 	u64 status;
-	u32 status_lo;
 
-	/* We need to read the low address first as this causes the
-	 * chipset to latch the upper bits for the subsequent read
-	 */
-	status_lo = readl(chan->reg_base + IOAT_CHANSTS_OFFSET_LOW(ver));
-	status = readl(chan->reg_base + IOAT_CHANSTS_OFFSET_HIGH(ver));
-	status <<= 32;
-	status |= status_lo;
+	 /* With IOAT v3.3 the status register is 64bit.  */
+	if (ver >= IOAT_VER_3_3)
+		status = readq(chan->reg_base + IOAT_CHANSTS_OFFSET(ver));
+	else {
+		u32 status_lo;
+
+		/*
+		 * We need to read the low address first as this causes the
+		 * chipset to latch the upper bits for the subsequent read
+		 */
+		status_lo = readl(chan->reg_base +
+				  IOAT_CHANSTS_OFFSET_LOW(ver));
+		status = readl(chan->reg_base + IOAT_CHANSTS_OFFSET_HIGH(ver));
+		status <<= 32;
+		status |= status_lo;
+	}
 
 	return status;
 }
