@@ -111,6 +111,7 @@ static void ntb_netdev_rx_handler(struct ntb_transport_qp *qp, void *qp_data,
 	}
 
 	skb = netdev_alloc_skb(ndev, ndev->mtu + ETH_HLEN);
+	//skb = netdev_alloc_skb_ip_align(ndev, ndev->mtu + ETH_HLEN);
 	if (!skb) {
 		ndev->stats.rx_errors++;
 		ndev->stats.rx_frame_errors++;
@@ -144,8 +145,8 @@ static void ntb_netdev_tx_handler(struct ntb_transport_qp *qp, void *qp_data,
 
 	dev_kfree_skb(skb);
 
-	if (netif_queue_stopped(ndev))
-		netif_wake_queue(ndev);
+//	if (netif_queue_stopped(ndev))
+//		netif_wake_queue(ndev);
 }
 
 static netdev_tx_t ntb_netdev_start_xmit(struct sk_buff *skb,
@@ -165,7 +166,7 @@ static netdev_tx_t ntb_netdev_start_xmit(struct sk_buff *skb,
 err:
 	ndev->stats.tx_dropped++;
 	ndev->stats.tx_errors++;
-	netif_stop_queue(ndev);
+//	netif_stop_queue(ndev);
 	return NETDEV_TX_BUSY;
 }
 
@@ -178,6 +179,7 @@ static int ntb_netdev_open(struct net_device *ndev)
 	/* Add some empty rx bufs */
 	for (i = 0; i < NTB_RXQ_SIZE; i++) {
 		skb = netdev_alloc_skb(ndev, ndev->mtu + ETH_HLEN);
+		//skb = netdev_alloc_skb_ip_align(ndev, ndev->mtu + ETH_HLEN);
 		if (!skb) {
 			rc = -ENOMEM;
 			goto err;
@@ -239,6 +241,7 @@ static int ntb_netdev_change_mtu(struct net_device *ndev, int new_mtu)
 
 		for (; i; i--) {
 			skb = netdev_alloc_skb(ndev, new_mtu + ETH_HLEN);
+			//skb = netdev_alloc_skb_ip_align(ndev, ndev->mtu + ETH_HLEN);
 			if (!skb) {
 				rc = -ENOMEM;
 				goto err;
@@ -280,7 +283,7 @@ static const struct net_device_ops ntb_netdev_ops = {
 	.ndo_stop = ntb_netdev_close,
 	.ndo_start_xmit = ntb_netdev_start_xmit,
 	.ndo_change_mtu = ntb_netdev_change_mtu,
-	.ndo_tx_timeout = ntb_netdev_tx_timeout,
+//	.ndo_tx_timeout = ntb_netdev_tx_timeout,
 	.ndo_set_mac_address = eth_mac_addr,
 };
 

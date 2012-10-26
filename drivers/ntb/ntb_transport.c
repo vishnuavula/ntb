@@ -45,13 +45,13 @@
  * Contact Information:
  * Jon Mason <jon.mason@intel.com>
  */
+#include <linux/async_tx.h>
 #include <linux/debugfs.h>
 #include <linux/delay.h>
 #include <linux/dma-mapping.h>
 #include <linux/errno.h>
 #include <linux/export.h>
 #include <linux/interrupt.h>
-#include <linux/kthread.h>
 #include <linux/module.h>
 #include <linux/pci.h>
 #include <linux/slab.h>
@@ -61,7 +61,9 @@
 
 #define NTB_TRANSPORT_VERSION	1
 
-static int transport_mtu = 0x401E;
+/* PAGE align the transport to allow for CBDMA.
+ * FIXME - Find the optimal size. */
+static unsigned int transport_mtu = PAGE_SIZE * 5;
 module_param(transport_mtu, uint, 0644);
 MODULE_PARM_DESC(transport_mtu, "Maximum size of NTB transport packets");
 
@@ -77,6 +79,9 @@ struct ntb_queue_entry {
 	void *buf;
 	unsigned int len;
 	unsigned int flags;
+
+	struct ntb_transport_qp *qp;
+	struct ntb_payload_header *hdr;
 };
 
 struct ntb_transport_qp {
@@ -120,9 +125,14 @@ struct ntb_transport_qp {
 	u64 rx_err_no_buf;
 	u64 rx_err_oflow;
 	u64 rx_err_ver;
+	u64 rx_memcpy;
+	u64 rx_async;
+
 	u64 tx_bytes;
 	u64 tx_pkts;
 	u64 tx_ring_full;
+	u64 tx_memcpy;
+	u64 tx_async;
 };
 
 struct ntb_transport_mw {
@@ -147,13 +157,14 @@ struct ntb_transport {
 enum {
 	DESC_DONE_FLAG = 1 << 0,
 	LINK_DOWN_FLAG = 1 << 1,
-	HW_ERROR_FLAG = 1 << 2,
 };
 
 struct ntb_payload_header {
 	u64 ver;
 	unsigned int len;
 	unsigned int flags;
+	/* FIXME - Pad to 1<<6 alignment for cbdma.  Need a more generic way to do this */
+	u64 pad[6];
 };
 
 enum {
@@ -329,6 +340,10 @@ static ssize_t debugfs_read(struct file *filp, char __user *ubuf, size_t count,
 	out_offset += snprintf(buf + out_offset, out_count - out_offset,
 			       "rx_ring_empty - %llu\n", qp->rx_ring_empty);
 	out_offset += snprintf(buf + out_offset, out_count - out_offset,
+			       "rx_memcpy - %llu\n", qp->rx_memcpy);
+	out_offset += snprintf(buf + out_offset, out_count - out_offset,
+			       "rx_async - %llu\n", qp->rx_async);
+	out_offset += snprintf(buf + out_offset, out_count - out_offset,
 			       "rx_err_no_buf - %llu\n", qp->rx_err_no_buf);
 	out_offset += snprintf(buf + out_offset, out_count - out_offset,
 			       "rx_err_oflow - %llu\n", qp->rx_err_oflow);
@@ -343,6 +358,10 @@ static ssize_t debugfs_read(struct file *filp, char __user *ubuf, size_t count,
 			       "tx_pkts - %llu\n", qp->tx_pkts);
 	out_offset += snprintf(buf + out_offset, out_count - out_offset,
 			       "tx_ring_full - %llu\n", qp->tx_ring_full);
+	out_offset += snprintf(buf + out_offset, out_count - out_offset,
+			       "tx_memcpy - %llu\n", qp->tx_memcpy);
+	out_offset += snprintf(buf + out_offset, out_count - out_offset,
+			       "tx_async - %llu\n", qp->tx_async);
 	out_offset += snprintf(buf + out_offset, out_count - out_offset,
 			       "tx_offset - %p\n", qp->tx_offset);
 
@@ -475,9 +494,10 @@ static void ntb_transport_conn_down(struct ntb_transport *nt)
 {
 	int i;
 
-	cancel_delayed_work_sync(&nt->link_work);
-
-	nt->transport_link = NTB_LINK_DOWN;
+	if (nt->transport_link == NTB_LINK_DOWN)
+		cancel_delayed_work_sync(&nt->link_work);
+	else
+		nt->transport_link = NTB_LINK_DOWN;
 
 	/* Pass along the info to any clients */
 	for (i = 0; i < nt->max_qps; i++)
@@ -804,25 +824,70 @@ void ntb_transport_free(void *transport)
 	kfree(nt);
 }
 
-static void ntb_rx_copy_task(struct ntb_transport_qp *qp,
-			     struct ntb_queue_entry *entry, void *offset)
+static void ntb_rx_copy_callback(void *data)
 {
+	struct ntb_queue_entry *entry = data;
+	struct ntb_transport_qp *qp = entry->qp;
+	struct ntb_payload_header *hdr = entry->hdr;
+ 
+ 	wmb();
+ 	hdr->flags = 0;
+ 
+ 	if (qp->rx_handler && qp->client_ready)
+ 		qp->rx_handler(qp, qp->cb_data, entry->cb_data, entry->len);
+ 
+//FIXME - rx handler will try to add a new buffer, but because there is not an entry free it will drop the first one...fix with a static array instead of a list?
+ 	ntb_list_add(&qp->ntb_rx_free_q_lock, &entry->entry, &qp->rx_free_q);
+}
 
-	struct ntb_payload_header *hdr;
+static void ntb_async_rx(struct ntb_queue_entry *entry, void *offset)
+{
+	struct dma_async_tx_descriptor *txd = NULL;
+	struct async_submit_ctl submit;
+	void *buf = entry->buf;
+	unsigned int rem_len = entry->len;
 
-	hdr = offset + transport_mtu - sizeof(struct ntb_payload_header);
-	entry->len = hdr->len;
+	do { 
+		struct page *dest, *src;
+		unsigned int d_offset, s_offset;
+		size_t len;
 
-	memcpy(entry->buf, offset, entry->len);
+		if (!virt_addr_valid(offset)) {
+			pr_err("%s:%d - Invalid addr\n", __func__, __LINE__);
+			return;
+		}
+		src = virt_to_page(offset);
+		s_offset = (unsigned long) offset & ~PAGE_MASK;
 
-	/* Ensure that the data is fully copied out before clearing the flag */
-	wmb();
-	hdr->flags = 0;
+		if (!virt_addr_valid(buf)) {
+			pr_err("%s:%d - Invalid addr\n", __func__, __LINE__);
+			return;
+		}
+		dest = virt_to_page(buf);
+		d_offset = (unsigned long) buf & ~PAGE_MASK;
 
-	if (qp->rx_handler && qp->client_ready)
-		qp->rx_handler(qp, qp->cb_data, entry->cb_data, entry->len);
+#if 0
+		len = entry->len;
+		rem_len -= len;
+#else
+		len = min(transport_mtu - (unsigned int) sizeof(struct ntb_payload_header), entry->len + (64 - (entry->len % 0x40)));
+		rem_len = 0;
+#endif
 
-	ntb_list_add(&qp->ntb_rx_free_q_lock, &entry->entry, &qp->rx_free_q);
+		if (rem_len > 0)
+			init_async_submit(&submit, ASYNC_TX_FENCE, txd, NULL, NULL, NULL);
+		else
+			init_async_submit(&submit, ASYNC_TX_ACK, txd, ntb_rx_copy_callback, entry, NULL);
+
+		txd = async_memcpy(dest, src, d_offset, s_offset, len, &submit);
+		if (!txd)
+			entry->qp->rx_memcpy++;
+		else
+			entry->qp->rx_async++;
+
+		offset += len;
+		buf += len;
+	} while (rem_len > 0);
 }
 
 static int ntb_process_rxc(struct ntb_transport_qp *qp)
@@ -869,16 +934,19 @@ static int ntb_process_rxc(struct ntb_transport_qp *qp)
 		 * done flag
 		 */
 		wmb();
-		hdr->flags = 0;
+		hdr->flags = 0;//FIXME - if this hits, do we ever want to receive another packet?
 		goto out;
 	}
 
 	pr_debug("rx offset %p, ver %llu - %d payload received, buf size %d\n",
 		 qp->rx_offset, hdr->ver, hdr->len, entry->len);
 
-	if (hdr->len <= entry->len)
-		ntb_rx_copy_task(qp, entry, offset);
-	else {
+	if (hdr->len <= entry->len) {
+		entry->hdr = hdr;
+		entry->len = hdr->len;
+
+		ntb_async_rx(entry, offset);
+	} else {
 		ntb_list_add(&qp->ntb_rx_pend_q_lock, &entry->entry,
 				  &qp->rx_pend_q);
 
@@ -921,19 +989,15 @@ static void ntb_transport_rxc_db(void *data, int db_num)
 	tasklet_schedule(&qp->rx_work);
 }
 
-static void ntb_tx_copy_task(struct ntb_transport_qp *qp,
-			     struct ntb_queue_entry *entry,
-			     void *offset)
+static void ntb_tx_copy_callback(void *data)
 {
-	struct ntb_payload_header *hdr;
+	struct ntb_queue_entry *entry = data;
+	struct ntb_transport_qp *qp = entry->qp;
+	struct ntb_payload_header *hdr = entry->hdr;
 
-	memcpy_toio(offset, entry->buf, entry->len);
-
-	hdr = offset + transport_mtu - sizeof(struct ntb_payload_header);
+	WARN_ON(hdr->flags);
 	hdr->len = entry->len;
 	hdr->ver = qp->tx_pkts;
-
-	/* Ensure that the data is fully copied out before setting the flag */
 	wmb();
 	hdr->flags = entry->flags | DESC_DONE_FLAG;
 
@@ -952,6 +1016,48 @@ static void ntb_tx_copy_task(struct ntb_transport_qp *qp,
 	}
 
 	ntb_list_add(&qp->ntb_tx_free_q_lock, &entry->entry, &qp->tx_free_q);
+}
+
+static void ntb_async_tx(struct ntb_queue_entry *entry, void *offset)
+{
+	struct dma_async_tx_descriptor *txd = NULL;
+	struct async_submit_ctl submit;
+	void *buf = entry->buf;
+	unsigned int rem_len = entry->len;
+
+	while (rem_len > 0) {
+		struct page *dest, *src;
+		unsigned int d_offset, s_offset;
+		size_t len;
+
+		/* MMIO memory fails the virt addr test.  So don't check it here */
+		dest = virt_to_page(offset);
+		d_offset = (unsigned long) offset & ~PAGE_MASK;
+
+		if (!virt_addr_valid(buf)) {
+			pr_err("%s:%d - Invalid addr\n", __func__, __LINE__);
+			return;
+		}
+		src = virt_to_page(buf);
+		s_offset = (unsigned long) buf & ~PAGE_MASK;
+
+		len = entry->len;
+		rem_len -= len;
+
+		if (rem_len > 0)
+			init_async_submit(&submit, ASYNC_TX_FENCE, txd, NULL, NULL, NULL);
+		else
+			init_async_submit(&submit, ASYNC_TX_ACK, txd, ntb_tx_copy_callback, entry, NULL);
+
+		txd = async_memcpy(dest, src, d_offset, s_offset, len, &submit);
+		if (!txd)
+			entry->qp->tx_memcpy++;
+		else
+			entry->qp->tx_async++;
+
+		offset += len;
+		buf += len;
+	}
 }
 
 static int ntb_process_tx(struct ntb_transport_qp *qp,
@@ -981,13 +1087,13 @@ static int ntb_process_tx(struct ntb_transport_qp *qp,
 		return 0;
 	}
 
-	ntb_tx_copy_task(qp, entry, offset);
+	entry->hdr = offset + transport_mtu - sizeof(struct ntb_payload_header);
+	ntb_async_tx(entry, offset);
+	qp->tx_pkts++;
 
 	qp->tx_offset += transport_mtu;
 	if (qp->tx_offset + transport_mtu >= qp->tx_mw_end)
 		qp->tx_offset = qp->tx_mw_begin;
-
-	qp->tx_pkts++;
 
 	return 0;
 }
@@ -1209,6 +1315,7 @@ int ntb_transport_rx_enqueue(struct ntb_transport_qp *qp, void *cb, void *data,
 	entry->cb_data = cb;
 	entry->buf = data;
 	entry->len = len;
+	entry->qp = qp;
 
 	ntb_list_add(&qp->ntb_rx_pend_q_lock, &entry->entry,
 			  &qp->rx_pend_q);
@@ -1247,6 +1354,7 @@ int ntb_transport_tx_enqueue(struct ntb_transport_qp *qp, void *cb, void *data,
 	entry->buf = data;
 	entry->len = len;
 	entry->flags = 0;
+	entry->qp = qp;
 
 	rc = ntb_process_tx(qp, entry);
 	if (rc)
