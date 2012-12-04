@@ -417,8 +417,8 @@ anyway :)
 >>> drivers/scsi/sym53c8xx_2
 >>> drivers/scsi/qla2xxx
 >>> drivers/scsi/lpfc
->>> drivers/next/bnx2.c
->>> drivers/next/e100.c
+>>> drivers/net/bnx2.c
+>>> drivers/net/e100.c
 >>> drivers/net/e1000
 >>> drivers/net/e1000e
 >>> drivers/net/ixgb

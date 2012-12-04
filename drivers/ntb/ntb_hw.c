@@ -53,6 +53,7 @@
 #include <linux/pci.h>
 #include <linux/random.h>
 #include <linux/slab.h>
+#include <linux/aer.h>
 #include "ntb_hw.h"
 #include "ntb_regs.h"
 
@@ -878,6 +879,10 @@ static int ntb_bwd_setup(struct ntb_device *ndev)
 
 	ndev->hw_type = BWD_HW;
 
+	rc = pci_enable_pcie_error_reporting(ndev->pdev);
+	if (rc)
+		dev_err(&ndev->pdev->dev, "AER enablement failed, continuing on anyway.\n");
+
 	rc = pci_read_config_dword(ndev->pdev, NTB_PPD_OFFSET, &val);
 	if (rc)
 		return rc;
@@ -896,12 +901,6 @@ static int ntb_bwd_setup(struct ntb_device *ndev)
 		ndev->dev_type = NTB_DEV_DSD;
 	else
 		ndev->dev_type = NTB_DEV_USD;
-
-	/* Initiate PCI-E link training */
-	rc = pci_write_config_dword(ndev->pdev, NTB_PPD_OFFSET,
-				    val | BWD_PPD_INIT_LINK);
-	if (rc)
-		return rc;
 
 	ndev->reg_ofs.ldb = ndev->reg_base + BWD_PDOORBELL_OFFSET;
 	ndev->reg_ofs.ldb_mask = ndev->reg_base + BWD_PDBMSK_OFFSET;
@@ -1346,35 +1345,65 @@ static void ntb_free_debugfs(struct ntb_device *ndev)
 
 static void ntb_hw_link_up(struct ntb_device *ndev)
 {
-	if (ndev->conn_type == NTB_CONN_TRANSPARENT)
-		ntb_link_event(ndev, NTB_LINK_UP);
-	else {
-		u32 ntb_cntl;
+	if (ndev->hw_type == BWD_HW) {
+		u32 val;
+		int rc;
 
-		/* Let's bring the NTB link up */
-		ntb_cntl = readl(ndev->reg_ofs.lnk_cntl);
-		ntb_cntl &= ~(NTB_CNTL_LINK_DISABLE | NTB_CNTL_CFG_LOCK);
-		ntb_cntl |= NTB_CNTL_P2S_BAR23_SNOOP | NTB_CNTL_S2P_BAR23_SNOOP;
-		ntb_cntl |= NTB_CNTL_P2S_BAR45_SNOOP | NTB_CNTL_S2P_BAR45_SNOOP;
-		writel(ntb_cntl, ndev->reg_ofs.lnk_cntl);
+		rc = pci_read_config_dword(ndev->pdev, NTB_PPD_OFFSET, &val);
+		if (rc)
+			return;
+
+		/* Initiate PCI-E link training */
+		rc = pci_write_config_dword(ndev->pdev, NTB_PPD_OFFSET,
+					    val | BWD_PPD_INIT_LINK);
+		if (rc)
+			return;
+	} else {
+		if (ndev->conn_type == NTB_CONN_TRANSPARENT)
+			ntb_link_event(ndev, NTB_LINK_UP);
+		else {
+			u32 ntb_cntl;
+
+			/* Let's bring the NTB link up */
+			ntb_cntl = readl(ndev->reg_ofs.lnk_cntl);
+			ntb_cntl &= ~(NTB_CNTL_LINK_DISABLE | NTB_CNTL_CFG_LOCK);
+			ntb_cntl |= NTB_CNTL_P2S_BAR23_SNOOP | NTB_CNTL_S2P_BAR23_SNOOP;
+			ntb_cntl |= NTB_CNTL_P2S_BAR45_SNOOP | NTB_CNTL_S2P_BAR45_SNOOP;
+			writel(ntb_cntl, ndev->reg_ofs.lnk_cntl);
+		}
 	}
 }
 
 static void ntb_hw_link_down(struct ntb_device *ndev)
 {
-	u32 ntb_cntl;
+	if (ndev->hw_type == BWD_HW) {
+		u32 val;
+		int rc;
 
-	if (ndev->conn_type == NTB_CONN_TRANSPARENT) {
-		ntb_link_event(ndev, NTB_LINK_DOWN);
-		return;
+		rc = pci_read_config_dword(ndev->pdev, NTB_PPD_OFFSET, &val);
+		if (rc)
+			return;
+
+		/* Disable PCI-E link training */
+		rc = pci_write_config_dword(ndev->pdev, NTB_PPD_OFFSET,
+					    val & ~BWD_PPD_INIT_LINK);
+		if (rc)
+			return;
+	} else {
+		u32 ntb_cntl;
+
+		if (ndev->conn_type == NTB_CONN_TRANSPARENT) {
+			ntb_link_event(ndev, NTB_LINK_DOWN);
+			return;
+		}
+
+		/* Bring NTB link down */
+		ntb_cntl = readl(ndev->reg_ofs.lnk_cntl);
+		ntb_cntl &= ~(NTB_CNTL_P2S_BAR23_SNOOP | NTB_CNTL_S2P_BAR23_SNOOP);
+		ntb_cntl &= ~(NTB_CNTL_P2S_BAR45_SNOOP | NTB_CNTL_S2P_BAR45_SNOOP);
+		ntb_cntl |= NTB_CNTL_LINK_DISABLE | NTB_CNTL_CFG_LOCK;
+		writel(ntb_cntl, ndev->reg_ofs.lnk_cntl);
 	}
-
-	/* Bring NTB link down */
-	ntb_cntl = readl(ndev->reg_ofs.lnk_cntl);
-	ntb_cntl &= ~(NTB_CNTL_P2S_BAR23_SNOOP | NTB_CNTL_S2P_BAR23_SNOOP);
-	ntb_cntl &= ~(NTB_CNTL_P2S_BAR45_SNOOP | NTB_CNTL_S2P_BAR45_SNOOP);
-	ntb_cntl |= NTB_CNTL_LINK_DISABLE | NTB_CNTL_CFG_LOCK;
-	writel(ntb_cntl, ndev->reg_ofs.lnk_cntl);
 }
 
 static int ntb_pci_probe(struct pci_dev *pdev, const struct pci_device_id *id)
@@ -1465,6 +1494,7 @@ static int ntb_pci_probe(struct pci_dev *pdev, const struct pci_device_id *id)
 	if (rc)
 		goto err6;
 
+	/* Let's bring the NTB link up */
 	ntb_hw_link_up(ndev);
 
 	return 0;
@@ -1496,6 +1526,7 @@ static void ntb_pci_remove(struct pci_dev *pdev)
 	struct ntb_device *ndev = pci_get_drvdata(pdev);
 	int i;
 
+	/* Bring NTB link down */
 	ntb_hw_link_down(ndev);
 
 	ntb_transport_free(ndev->ntb_transport);
@@ -1509,15 +1540,107 @@ static void ntb_pci_remove(struct pci_dev *pdev)
 
 	iounmap(ndev->reg_base);
 	pci_release_selected_regions(pdev, NTB_BAR_MASK);
+	pci_disable_pcie_error_reporting(pdev);
 	pci_disable_device(pdev);
 	ntb_free_debugfs(ndev);
 	kfree(ndev);
 }
+
+/* PCI bus error detected on this device */
+static pci_ers_result_t
+ntb_pci_error_detected(struct pci_dev *pdev, enum pci_channel_state error)
+{
+	struct ntb_device *ndev = pci_get_drvdata(pdev);
+
+	ntb_link_event(ndev, NTB_LINK_DOWN);
+
+	switch (error) {
+	case pci_channel_io_normal:
+		dev_warn(&pdev->dev, "PCI AER non-fatal error detected");
+		return PCI_ERS_RESULT_CAN_RECOVER;
+	case pci_channel_io_frozen:
+		dev_err(&pdev->dev, "PCI AER fatal error detected");
+		ntb_device_free(ndev);
+		pci_disable_device(pdev);
+		return PCI_ERS_RESULT_NEED_RESET;
+	case pci_channel_io_perm_failure:
+		dev_err(&pdev->dev, "PCI error detected and unable to recover");
+		return PCI_ERS_RESULT_DISCONNECT;
+	default:
+		dev_err(&pdev->dev, "Unknown PCI Error");
+		return PCI_ERS_RESULT_NONE;
+	}
+}
+
+/* PCI Express link has been reset */
+static pci_ers_result_t ntb_pci_link_reset(struct pci_dev *pdev)
+{
+	dev_err(&pdev->dev, "PCI AER: Link Reset");
+	BUG();
+	return PCI_ERS_RESULT_NONE;
+}
+
+/* MMIO has been re-enabled, but not DMA */
+static pci_ers_result_t ntb_pci_mmio_enabled(struct pci_dev *pdev)
+{
+	struct ntb_device *ndev = pci_get_drvdata(pdev);
+
+	dev_err(&pdev->dev, "PCI AER: MMIO re-enabled");
+
+	/* Bring NTB link down */
+	ntb_hw_link_down(ndev);
+
+	return PCI_ERS_RESULT_RECOVERED;
+}
+
+/* PCI slot has been reset */
+static pci_ers_result_t ntb_pci_slot_reset(struct pci_dev *pdev)
+{
+	struct ntb_device *ndev = pci_get_drvdata(pdev);
+	int rc;
+
+	dev_err(&pdev->dev, "PCI AER: Slot Reset");
+
+	rc = pci_enable_device(pdev);
+	if (rc)
+		return PCI_ERS_RESULT_DISCONNECT;
+
+	pci_set_master(pdev);
+	pci_restore_state(pdev);
+	pci_save_state(pdev);
+	pci_cleanup_aer_uncorrect_error_status(pdev);
+
+	rc = ntb_device_setup(ndev);
+	if (rc)
+		return PCI_ERS_RESULT_DISCONNECT;
+
+	return PCI_ERS_RESULT_RECOVERED;
+}
+
+/* Device driver may resume normal operations */
+static void ntb_pci_resume(struct pci_dev *pdev)
+{
+	struct ntb_device *ndev = pci_get_drvdata(pdev);
+
+	dev_err(&pdev->dev, "PCI AER error recovered");
+
+	/* Let's bring the NTB link up */
+	ntb_hw_link_up(ndev);
+}
+
+static struct pci_error_handlers ntb_pci_err_handler = {
+	.error_detected = ntb_pci_error_detected,
+	.mmio_enabled = ntb_pci_mmio_enabled,
+	.link_reset = ntb_pci_link_reset,
+	.slot_reset = ntb_pci_slot_reset,
+	.resume = ntb_pci_resume,
+};
 
 static struct pci_driver ntb_pci_driver = {
 	.name = KBUILD_MODNAME,
 	.id_table = ntb_pci_tbl,
 	.probe = ntb_pci_probe,
 	.remove = ntb_pci_remove,
+	.err_handler = &ntb_pci_err_handler,
 };
 module_pci_driver(ntb_pci_driver);
