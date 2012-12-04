@@ -51,11 +51,12 @@
 #include <linux/module.h>
 #include <linux/pci.h>
 #include <linux/slab.h>
+#include <linux/aer.h>
 #include "ntb_hw.h"
 #include "ntb_regs.h"
 
 #define NTB_NAME	"Intel(R) PCI-E Non-Transparent Bridge Driver"
-#define NTB_VER		"0.24"
+#define NTB_VER		"0.25"
 
 MODULE_DESCRIPTION(NTB_NAME);
 MODULE_VERSION(NTB_VER);
@@ -638,7 +639,7 @@ static int ntb_bwd_setup(struct ntb_device *ndev)
 	return 0;
 }
 
-static int __devinit ntb_device_setup(struct ntb_device *ndev)
+static int ntb_device_setup(struct ntb_device *ndev)
 {
 	int rc;
 
@@ -1027,6 +1028,10 @@ ntb_pci_probe(struct pci_dev *pdev,
 	if (rc)
 		goto err;
 
+	rc = pci_enable_pcie_error_reporting(pdev);
+	if (rc)
+		dev_err(&pdev->dev, "AER enablement failed, continuing on anyway.\n");
+
 	pci_set_master(ndev->pdev);
 
 	rc = pci_request_selected_regions(pdev, NTB_BAR_MASK, KBUILD_MODNAME);
@@ -1146,14 +1151,110 @@ static void __devexit ntb_pci_remove(struct pci_dev *pdev)
 
 	iounmap(ndev->reg_base);
 	pci_release_selected_regions(pdev, NTB_BAR_MASK);
+	pci_disable_pcie_error_reporting(pdev);
 	pci_disable_device(pdev);
 	kfree(ndev);
 }
+
+/* PCI bus error detected on this device */
+static pci_ers_result_t
+ntb_pci_error_detected(struct pci_dev *pdev, enum pci_channel_state error)
+{
+	struct ntb_device *ndev = pci_get_drvdata(pdev);
+
+	ntb_link_event(ndev, NTB_LINK_DOWN);
+
+	switch (error) {
+	case pci_channel_io_normal:
+		dev_err(&pdev->dev, "PCI AER non-fatal error detected");
+		return PCI_ERS_RESULT_CAN_RECOVER;
+	case pci_channel_io_frozen:
+		dev_err(&pdev->dev, "PCI AER fatal error detected");
+		ntb_device_free(ndev);
+		pci_disable_device(pdev);
+		return PCI_ERS_RESULT_NEED_RESET;
+	case pci_channel_io_perm_failure:
+		dev_err(&pdev->dev, "PCI error detected and unable to recover");
+		return PCI_ERS_RESULT_DISCONNECT;
+	default:
+		dev_err(&pdev->dev, "Unknown PCI Error");
+		return PCI_ERS_RESULT_NONE;
+	}
+}
+
+/* PCI Express link has been reset */
+static pci_ers_result_t ntb_pci_link_reset(struct pci_dev *pdev)
+{
+	dev_err(&pdev->dev, "PCI AER: Link Reset");
+	BUG();
+	return PCI_ERS_RESULT_NONE;
+}
+
+/* MMIO has been re-enabled, but not DMA */
+static pci_ers_result_t ntb_pci_mmio_enabled(struct pci_dev *pdev)
+{
+	struct ntb_device *ndev = pci_get_drvdata(pdev);
+	u32 ntb_cntl;
+
+	dev_err(&pdev->dev, "PCI AER: MMIO re-enabled");
+
+	/* Bring NTB link down */
+	ntb_cntl = readl(ndev->reg_ofs.lnk_cntl);
+	ntb_cntl |= NTB_LINK_DISABLE;
+	writel(ntb_cntl, ndev->reg_ofs.lnk_cntl);
+
+	return PCI_ERS_RESULT_RECOVERED;
+}
+
+/* PCI slot has been reset */
+static pci_ers_result_t ntb_pci_slot_reset(struct pci_dev *pdev)
+{
+	struct ntb_device *ndev = pci_get_drvdata(pdev);
+	int rc;
+
+	dev_err(&pdev->dev, "PCI AER: Slot Reset");
+
+	rc = pci_enable_device(pdev);
+	if (rc)
+		return PCI_ERS_RESULT_DISCONNECT;
+
+	pci_set_master(pdev);
+	pci_restore_state(pdev);
+	pci_save_state(pdev);
+	pci_cleanup_aer_uncorrect_error_status(pdev);
+
+	rc = ntb_device_setup(ndev);
+	if (rc)
+		return PCI_ERS_RESULT_DISCONNECT;
+
+	return PCI_ERS_RESULT_RECOVERED;
+}
+
+/* Device driver may resume normal operations */
+static void ntb_pci_resume(struct pci_dev *pdev)
+{
+	struct ntb_device *ndev = pci_get_drvdata(pdev);
+
+	dev_err(&pdev->dev, "PCI AER error recovered");
+
+	/* Let's bring the NTB link up */
+	writel(NTB_CNTL_BAR23_SNOOP | NTB_CNTL_BAR45_SNOOP,
+	       ndev->reg_ofs.lnk_cntl);
+}
+
+static struct pci_error_handlers ntb_pci_err_handler = {
+	.error_detected = ntb_pci_error_detected,
+	.mmio_enabled = ntb_pci_mmio_enabled,
+	.link_reset = ntb_pci_link_reset,
+	.slot_reset = ntb_pci_slot_reset,
+	.resume = ntb_pci_resume,
+};
 
 static struct pci_driver ntb_pci_driver = {
 	.name = KBUILD_MODNAME,
 	.id_table = ntb_pci_tbl,
 	.probe = ntb_pci_probe,
 	.remove = __devexit_p(ntb_pci_remove),
+	.err_handler = &ntb_pci_err_handler,
 };
 module_pci_driver(ntb_pci_driver);
