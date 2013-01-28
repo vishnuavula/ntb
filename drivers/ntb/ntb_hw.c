@@ -69,6 +69,14 @@ static bool xeon_errata_workaround = true;
 module_param(xeon_errata_workaround, bool, 0644);
 MODULE_PARM_DESC(xeon_errata_workaround, "Workaround for the Xeon Errata");
 
+static bool disable_msix;
+module_param(disable_msix, bool, 0644);
+MODULE_PARM_DESC(disable_msix, "Disable MSI-X Interrupts");
+
+static bool disable_msi;
+module_param(disable_msi, bool, 0644);
+MODULE_PARM_DESC(disable_msi, "Disable MSI Interrupts");
+
 enum {
 	NTB_CONN_TRANSPARENT = 0,
 	NTB_CONN_B2B,
@@ -1278,6 +1286,9 @@ static int ntb_setup_msix(struct ntb_device *ndev)
 	int rc, i;
 	u16 val;
 
+	if (disable_msix)
+		return -EACCES;
+
 	if (!pdev->msix_cap) {
 		rc = -EIO;
 		goto err;
@@ -1382,6 +1393,9 @@ static int ntb_setup_msi(struct ntb_device *ndev)
 {
 	struct pci_dev *pdev = ndev->pdev;
 	int rc;
+
+	if (disable_msi)
+		return -EACCES;
 
 	rc = pci_enable_msi(pdev);
 	if (rc)
