@@ -669,8 +669,40 @@ static int ntb_xeon_setup(struct ntb_device *ndev)
 {
 	int rc;
 	u8 val;
+	u32 val32;
 
 	ndev->hw_type = SNB_HW;
+
+	/* Enable non-standard AER */
+	rc = pci_write_config_dword(ndev->pdev, SNB_RPERRCMD_OFFSET,
+				    SNB_AER_FATAL_ENABLE |
+				    SNB_AER_NONFATAL_ENABLE |
+				    SNB_AER_CORRERR_ENABLE);
+	if (rc)
+		dev_err(&ndev->pdev->dev, "AER enablement failed, continuing on anyway.\n");
+
+	/* Disable SLD AER event, as this will show up as a Link down interrupt
+	 * in B2B mode.  Also, make the error not fatal.  Otherwise, any
+	 * non-fatal error will be escilated to fatal when it is detected due to
+	 * a fatal SLD error being detected but masked.
+	 */
+	rc = pci_read_config_dword(ndev->pdev, SNB_UNCERRMSK_OFFSET, &val32);
+	if (rc)
+		return rc;
+
+	val32 |= SNB_AER_SLDMASK;
+	rc = pci_write_config_dword(ndev->pdev, SNB_UNCERRMSK_OFFSET, val32);
+	if (rc)
+		return rc;
+
+	rc = pci_read_config_dword(ndev->pdev, SNB_UNCERRSEV_OFFSET, &val32);
+	if (rc)
+		return rc;
+
+	val32 &= ~SNB_AER_SLDSEV;
+	rc = pci_write_config_dword(ndev->pdev, SNB_UNCERRSEV_OFFSET, val32);
+	if (rc)
+		return rc;
 
 	rc = pci_read_config_byte(ndev->pdev, NTB_PPD_OFFSET, &val);
 	if (rc)
@@ -1025,13 +1057,173 @@ static irqreturn_t xeon_callback_msix_irq(int irq, void *data)
 	return IRQ_HANDLED;
 }
 
+static void ntb_hw_link_up(struct ntb_device *ndev)
+{
+	if (ndev->hw_type == BWD_HW) {
+		u32 val;
+		int rc;
+
+		rc = pci_read_config_dword(ndev->pdev, NTB_PPD_OFFSET, &val);
+		if (rc)
+			return;
+
+		/* Initiate PCI-E link training */
+		rc = pci_write_config_dword(ndev->pdev, NTB_PPD_OFFSET,
+					    val | BWD_PPD_INIT_LINK);
+		if (rc)
+			return;
+	} else {
+		if (ndev->conn_type == NTB_CONN_TRANSPARENT)
+			ntb_link_event(ndev, NTB_LINK_UP);
+		else {
+			u32 ntb_cntl;
+
+			/* Let's bring the NTB link up */
+			ntb_cntl = readl(ndev->reg_ofs.lnk_cntl);
+			ntb_cntl &= ~(NTB_CNTL_LINK_DISABLE | NTB_CNTL_CFG_LOCK);
+			ntb_cntl |= NTB_CNTL_P2S_BAR23_SNOOP | NTB_CNTL_S2P_BAR23_SNOOP;
+			ntb_cntl |= NTB_CNTL_P2S_BAR45_SNOOP | NTB_CNTL_S2P_BAR45_SNOOP;
+			writel(ntb_cntl, ndev->reg_ofs.lnk_cntl);
+		}
+	}
+}
+
+static void ntb_hw_link_down(struct ntb_device *ndev)
+{
+	if (ndev->hw_type == BWD_HW) {
+		u32 val;
+		int rc;
+
+		rc = pci_read_config_dword(ndev->pdev, NTB_PPD_OFFSET, &val);
+		if (rc)
+			return;
+
+		/* Disable PCI-E link training */
+		rc = pci_write_config_dword(ndev->pdev, NTB_PPD_OFFSET,
+					    val & ~BWD_PPD_INIT_LINK);
+		if (rc)
+			return;
+	} else {
+		u32 ntb_cntl;
+
+		if (ndev->conn_type == NTB_CONN_TRANSPARENT) {
+			ntb_link_event(ndev, NTB_LINK_DOWN);
+			return;
+		}
+
+		/* Bring NTB link down */
+		ntb_cntl = readl(ndev->reg_ofs.lnk_cntl);
+		ntb_cntl &= ~(NTB_CNTL_P2S_BAR23_SNOOP | NTB_CNTL_S2P_BAR23_SNOOP);
+		ntb_cntl &= ~(NTB_CNTL_P2S_BAR45_SNOOP | NTB_CNTL_S2P_BAR45_SNOOP);
+		ntb_cntl |= NTB_CNTL_LINK_DISABLE | NTB_CNTL_CFG_LOCK;
+		writel(ntb_cntl, ndev->reg_ofs.lnk_cntl);
+	}
+}
+
+static void ntb_aer_fatal_recover(struct ntb_device *ndev)
+{
+	u16 val;
+	int rc;
+
+	/* Bad things are happening.  Bring down the link to the remote system,
+	 * stop all data, and retrain the link.  Hopefully retraining the link
+	 * is sufficient to recover from the fatal error.
+	 */
+
+	ntb_link_event(ndev, NTB_LINK_DOWN);
+
+	/* Bring NTB link down */
+	ntb_hw_link_down(ndev);
+
+	rc = pci_read_config_word(ndev->pdev, SNB_LNKCON_OFFSET, &val);
+	if (rc)
+		return;
+
+	val |= SNB_LNKCON_RETRAIN;
+	rc = pci_write_config_word(ndev->pdev, SNB_LNKCON_OFFSET, val);
+	if (rc)
+		return;
+
+	/* Let's bring the NTB link up */
+	ntb_hw_link_up(ndev);
+}
+
+static void xeon_aer_check(struct ntb_device *ndev)
+{
+	u32 val;
+	int rc;
+
+	rc = pci_read_config_dword(ndev->pdev, SNB_RPERRSTS_OFFSET, &val);
+	if (rc)
+		return;
+
+	/* Nothing to see here, move along */
+	if (!val)
+		return;
+
+	if (val & SNB_AER_CORR_ERR) {
+		u32 err;
+
+		rc = pci_read_config_dword(ndev->pdev, SNB_CORERRSTS_OFFSET,
+					   &err);
+		if (rc) {
+			dev_info(&ndev->pdev->dev, "Error reading CORERRSTS\n");
+			return;
+		}
+
+		dev_warn(&ndev->pdev->dev, "AER Correctable Error Found - %x\n",
+			 err);
+
+		rc = pci_write_config_dword(ndev->pdev, SNB_CORERRSTS_OFFSET,
+					    err);
+		if (rc) {
+			dev_info(&ndev->pdev->dev, "Error writing CORERRSTS\n");
+			return;
+		}
+	}
+
+	if (val & (SNB_AER_NONFATAL_ERR | SNB_AER_FATAL_ERR)) {
+		u32 err;
+
+		rc = pci_read_config_dword(ndev->pdev, SNB_UNCERRSTS_OFFSET,
+					   &err);
+		if (rc) {
+			dev_info(&ndev->pdev->dev, "Error writing UNCERRSTS\n");
+			return;
+		}
+
+		if (val & SNB_AER_FATAL_ERR)
+			dev_err(&ndev->pdev->dev, "AER Fatal Error Found - %x\n",
+				err);
+		else
+			dev_warn(&ndev->pdev->dev, "AER Nonfatal Error Found - %x\n",
+				 err);
+
+		rc = pci_write_config_dword(ndev->pdev, SNB_UNCERRSTS_OFFSET,
+					    err);
+		if (rc) {
+			dev_info(&ndev->pdev->dev, "Error writing UNCERRSTS\n");
+			return;
+		}
+
+		if (val & SNB_AER_FATAL_ERR)
+			ntb_aer_fatal_recover(ndev);
+	}
+
+	pci_write_config_dword(ndev->pdev, SNB_RPERRSTS_OFFSET, val);
+}
+
 /* Since we do not have a HW doorbell in BWD, this is only used in JF/JT */
 static irqreturn_t xeon_event_msix_irq(int irq, void *dev)
 {
 	struct ntb_device *ndev = dev;
 	int rc;
 
+	/* This interrupt is shared for AER events and Link Status */
+
 	dev_dbg(&ndev->pdev->dev, "MSI-X irq %d received for Events\n", irq);
+
+	xeon_aer_check(ndev);
 
 	rc = ntb_link_status(ndev);
 	if (rc)
@@ -1340,69 +1532,6 @@ static void ntb_free_debugfs(struct ntb_device *ndev)
 	if (debugfs_dir && simple_empty(debugfs_dir)) {
 		debugfs_remove_recursive(debugfs_dir);
 		debugfs_dir = NULL;
-	}
-}
-
-static void ntb_hw_link_up(struct ntb_device *ndev)
-{
-	if (ndev->hw_type == BWD_HW) {
-		u32 val;
-		int rc;
-
-		rc = pci_read_config_dword(ndev->pdev, NTB_PPD_OFFSET, &val);
-		if (rc)
-			return;
-
-		/* Initiate PCI-E link training */
-		rc = pci_write_config_dword(ndev->pdev, NTB_PPD_OFFSET,
-					    val | BWD_PPD_INIT_LINK);
-		if (rc)
-			return;
-	} else {
-		if (ndev->conn_type == NTB_CONN_TRANSPARENT)
-			ntb_link_event(ndev, NTB_LINK_UP);
-		else {
-			u32 ntb_cntl;
-
-			/* Let's bring the NTB link up */
-			ntb_cntl = readl(ndev->reg_ofs.lnk_cntl);
-			ntb_cntl &= ~(NTB_CNTL_LINK_DISABLE | NTB_CNTL_CFG_LOCK);
-			ntb_cntl |= NTB_CNTL_P2S_BAR23_SNOOP | NTB_CNTL_S2P_BAR23_SNOOP;
-			ntb_cntl |= NTB_CNTL_P2S_BAR45_SNOOP | NTB_CNTL_S2P_BAR45_SNOOP;
-			writel(ntb_cntl, ndev->reg_ofs.lnk_cntl);
-		}
-	}
-}
-
-static void ntb_hw_link_down(struct ntb_device *ndev)
-{
-	if (ndev->hw_type == BWD_HW) {
-		u32 val;
-		int rc;
-
-		rc = pci_read_config_dword(ndev->pdev, NTB_PPD_OFFSET, &val);
-		if (rc)
-			return;
-
-		/* Disable PCI-E link training */
-		rc = pci_write_config_dword(ndev->pdev, NTB_PPD_OFFSET,
-					    val & ~BWD_PPD_INIT_LINK);
-		if (rc)
-			return;
-	} else {
-		u32 ntb_cntl;
-
-		if (ndev->conn_type == NTB_CONN_TRANSPARENT) {
-			ntb_link_event(ndev, NTB_LINK_DOWN);
-			return;
-		}
-
-		/* Bring NTB link down */
-		ntb_cntl = readl(ndev->reg_ofs.lnk_cntl);
-		ntb_cntl &= ~(NTB_CNTL_P2S_BAR23_SNOOP | NTB_CNTL_S2P_BAR23_SNOOP);
-		ntb_cntl &= ~(NTB_CNTL_P2S_BAR45_SNOOP | NTB_CNTL_S2P_BAR45_SNOOP);
-		ntb_cntl |= NTB_CNTL_LINK_DISABLE | NTB_CNTL_CFG_LOCK;
-		writel(ntb_cntl, ndev->reg_ofs.lnk_cntl);
 	}
 }
 
