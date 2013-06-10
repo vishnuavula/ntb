@@ -11,3 +11,6 @@ config NTB
 
         If unsure, say N.
 
+config NTB_TEST
+	tristate "NTB Test module"
+	depends on NTB
