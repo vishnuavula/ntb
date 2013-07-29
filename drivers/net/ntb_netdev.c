@@ -80,14 +80,20 @@ static void ntb_netdev_event_handler(void *data, int status)
 	struct ntb_netdev *dev = netdev_priv(ndev);
 	int i;
 
-	for (i = 0; i < num_qps; i++) {
-		if (!ntb_transport_link_query(dev->qp[i])) {
-			netif_carrier_off(ndev);
-			return;
-		}
-	}
+	switch (status) {
+	case NTB_LINK_DOWN:
+		netif_carrier_off(ndev);
+		break;
+	case NTB_LINK_UP:
+		for (i = 0; i < num_qps; i++)
+			if (!ntb_transport_link_query(dev->qp[i]))
+				return;
 
-	netif_carrier_on(ndev);
+		netif_carrier_on(ndev);
+		break;
+	default:
+		netdev_warn(ndev, "Unsupported event type %d\n", status);
+	}
 }
 
 static void ntb_netdev_rx_handler(struct ntb_transport_qp *qp, void *qp_data,
