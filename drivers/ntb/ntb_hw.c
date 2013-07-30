@@ -531,8 +531,6 @@ static void bwd_recover_link(struct ntb_device *ndev)
 
 static void ntb_link_event(struct ntb_device *ndev, int link_state)
 {
-	unsigned int event;
-
 	if (ndev->link_status == link_state)
 		return;
 
@@ -541,7 +539,6 @@ static void ntb_link_event(struct ntb_device *ndev, int link_state)
 
 		dev_info(&ndev->pdev->dev, "Link Up\n");
 		ndev->link_status = NTB_LINK_UP;
-		event = NTB_EVENT_HW_LINK_UP;
 
 		if (ndev->hw_type == BWD_HW ||
 		    ndev->conn_type == NTB_CONN_TRANSPARENT)
@@ -558,16 +555,28 @@ static void ntb_link_event(struct ntb_device *ndev, int link_state)
 		ndev->link_speed = (status & NTB_LINK_SPEED_MASK);
 		dev_info(&ndev->pdev->dev, "Link Width %d, Link Speed %d\n",
 			 ndev->link_width, ndev->link_speed);
+		schedule_delayed_work(&ndev->hb_timer, NTB_HB_TIMEOUT);
+		schedule_delayed_work(&ndev->hb_alive_timer,
+				      NTB_HB_TIMEOUT * 2);
 	} else {
+		if (ndev->hw_type == BWD_HW) {
+			cancel_delayed_work_sync(&ndev->hb_timer);
+			cancel_delayed_work_sync(&ndev->hb_alive_timer);
+		} else {
+			cancel_delayed_work(&ndev->hb_timer);
+			cancel_delayed_work(&ndev->hb_alive_timer);
+		}
+		ndev->hb_alive = false;
+
 		dev_info(&ndev->pdev->dev, "Link Down\n");
 		ndev->link_status = NTB_LINK_DOWN;
-		event = NTB_EVENT_HW_LINK_DOWN;
 		/* Don't modify link width/speed, we need it in link recovery */
-	}
 
-	/* notify the upper layer if we have an event change */
-	if (ndev->event_cb)
-		ndev->event_cb(ndev->ntb_transport, event);
+		/* notify the upper layer if we have an event change */
+		if (ndev->event_cb)
+			ndev->event_cb(ndev->ntb_transport,
+				       NTB_EVENT_HW_LINK_DOWN);
+	}
 }
 
 static int ntb_link_status(struct ntb_device *ndev)
@@ -636,24 +645,24 @@ static void bwd_link_recovery(struct work_struct *work)
 			goto retry;
 	}
 
-	schedule_delayed_work(&ndev->hb_timer, NTB_HB_TIMEOUT);
+	schedule_delayed_work(&ndev->link_timer, NTB_LINK_TIMEOUT);
 	return;
 
 retry:
-	schedule_delayed_work(&ndev->lr_timer, NTB_HB_TIMEOUT);
+	schedule_delayed_work(&ndev->lr_timer, NTB_LINK_TIMEOUT);
 }
 
 /* BWD doesn't have link status interrupt, poll on that platform */
 static void bwd_link_poll(struct work_struct *work)
 {
 	struct ntb_device *ndev = container_of(work, struct ntb_device,
-					       hb_timer.work);
+					       link_timer.work);
 	unsigned long ts = jiffies;
 
 	/* If we haven't gotten an interrupt in a while, check the BWD link
 	 * status bit
 	 */
-	if (ts > ndev->last_ts + NTB_HB_TIMEOUT) {
+	if (ts > ndev->last_ts + NTB_LINK_TIMEOUT) {
 		int rc = ntb_link_status(ndev);
 		if (rc)
 			dev_err(&ndev->pdev->dev,
@@ -670,7 +679,7 @@ static void bwd_link_poll(struct work_struct *work)
 		}
 	}
 
-	schedule_delayed_work(&ndev->hb_timer, NTB_HB_TIMEOUT);
+	schedule_delayed_work(&ndev->link_timer, NTB_LINK_TIMEOUT);
 }
 
 static int ntb_xeon_setup(struct ntb_device *ndev)
@@ -959,9 +968,9 @@ static int ntb_bwd_setup(struct ntb_device *ndev)
 	ndev->bits_per_vector = BWD_DB_BITS_PER_VEC;
 
 	/* Since bwd doesn't have a link interrupt, setup a poll timer */
-	INIT_DELAYED_WORK(&ndev->hb_timer, bwd_link_poll);
+	INIT_DELAYED_WORK(&ndev->link_timer, bwd_link_poll);
 	INIT_DELAYED_WORK(&ndev->lr_timer, bwd_link_recovery);
-	schedule_delayed_work(&ndev->hb_timer, NTB_HB_TIMEOUT);
+	schedule_delayed_work(&ndev->link_timer, NTB_LINK_TIMEOUT);
 
 	return 0;
 }
@@ -1009,7 +1018,7 @@ static int ntb_device_setup(struct ntb_device *ndev)
 static void ntb_device_free(struct ntb_device *ndev)
 {
 	if (ndev->hw_type == BWD_HW) {
-		cancel_delayed_work_sync(&ndev->hb_timer);
+		cancel_delayed_work_sync(&ndev->link_timer);
 		cancel_delayed_work_sync(&ndev->lr_timer);
 	}
 }
@@ -1549,6 +1558,70 @@ static void ntb_free_debugfs(struct ntb_device *ndev)
 	}
 }
 
+static void ntb_hb_poll(struct work_struct *work)
+{
+	struct ntb_device *ndev = container_of(work, struct ntb_device,
+					       hb_timer.work);
+
+	ntb_ring_doorbell(ndev, ndev->max_cbs);
+	schedule_delayed_work(&ndev->hb_timer, NTB_HB_TIMEOUT);
+}
+
+static void ntb_hb_alive_poll(struct work_struct *work)
+{
+	struct ntb_device *ndev = container_of(work, struct ntb_device,
+					       hb_alive_timer.work);
+	ndev->hb_alive = false;
+	dev_info(&ndev->pdev->dev, "NTB Heartbeat failure\n");
+
+	/* notify the upper layer if we have an event change */
+	if (ndev->event_cb)
+		ndev->event_cb(ndev->ntb_transport, NTB_EVENT_HW_LINK_DOWN);
+}
+
+static int ntb_hb_irq(void *data, int db_num)
+{
+	struct ntb_device *ndev = data;
+	bool alive = ndev->hb_alive;
+
+	mod_delayed_work(system_wq, &ndev->hb_alive_timer, NTB_HB_TIMEOUT * 2);
+
+	ndev->hb_alive = true;
+	/* notify the upper layer if we have an event change */
+	if (ndev->event_cb && !alive)
+		ndev->event_cb(ndev->ntb_transport, NTB_EVENT_HW_LINK_UP);
+
+	return 0;
+}
+
+static int ntb_hb_init(struct ntb_device *ndev)
+{
+	int rc;
+
+	INIT_DELAYED_WORK(&ndev->hb_timer, ntb_hb_poll);
+	INIT_DELAYED_WORK(&ndev->hb_alive_timer, ntb_hb_alive_poll);
+
+	/* Use the last available db for hb */
+	rc = ntb_register_db_callback(ndev, ndev->max_cbs - 1, ndev,
+				      ntb_hb_irq);
+	if (rc)
+		return rc;
+
+	/* decrement max_cbs to reserve the last db for hb */
+	ndev->max_cbs--;
+
+	return 0;
+}
+
+static void ntb_hb_free(struct ntb_device *ndev)
+{
+	cancel_delayed_work_sync(&ndev->hb_alive_timer);
+	cancel_delayed_work_sync(&ndev->hb_timer);
+
+	ndev->max_cbs++;
+	ntb_unregister_db_callback(ndev, ndev->max_cbs);
+}
+
 static int ntb_pci_probe(struct pci_dev *pdev, const struct pci_device_id *id)
 {
 	struct ntb_device *ndev;
@@ -1637,11 +1710,17 @@ static int ntb_pci_probe(struct pci_dev *pdev, const struct pci_device_id *id)
 	if (rc)
 		goto err6;
 
+	rc = ntb_hb_init(ndev);
+	if (rc)
+		goto err7;
+
 	/* Let's bring the NTB link up */
 	ntb_hw_link_up(ndev);
 
 	return 0;
 
+err7:
+	ntb_transport_free(ndev->ntb_transport);
 err6:
 	ntb_free_interrupts(ndev);
 err5:
@@ -1671,6 +1750,7 @@ static void ntb_pci_remove(struct pci_dev *pdev)
 
 	/* Bring NTB link down */
 	ntb_hw_link_down(ndev);
+	ntb_hb_free(ndev);
 
 	ntb_transport_free(ndev->ntb_transport);
 

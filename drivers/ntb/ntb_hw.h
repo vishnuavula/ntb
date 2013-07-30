@@ -84,7 +84,8 @@ static inline void writeq(u64 val, void __iomem *addr)
 #define NTB_BAR_MASK		((1 << NTB_BAR_MMIO) | (1 << NTB_BAR_23) |\
 				 (1 << NTB_BAR_45))
 
-#define NTB_HB_TIMEOUT		msecs_to_jiffies(1000)
+#define NTB_LINK_TIMEOUT	msecs_to_jiffies(1000)
+#define NTB_HB_TIMEOUT		msecs_to_jiffies(500)
 
 #define NTB_MAX_NUM_MW		2
 
@@ -148,7 +149,11 @@ struct ntb_device {
 	unsigned char link_speed;
 	unsigned char link_status;
 
+	struct delayed_work hb_alive_timer;
 	struct delayed_work hb_timer;
+	bool hb_alive;
+
+	struct delayed_work link_timer;
 	unsigned long last_ts;
 
 	struct delayed_work lr_timer;
@@ -192,7 +197,7 @@ static inline unsigned char ntb_max_mw(struct ntb_device *ndev)
  */
 static inline bool ntb_hw_link_status(struct ntb_device *ndev)
 {
-	return ndev->link_status == NTB_LINK_UP;
+	return ndev->link_status == NTB_LINK_UP && ndev->hb_alive;
 }
 
 /**
