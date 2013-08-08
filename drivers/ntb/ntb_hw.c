@@ -1859,11 +1859,55 @@ static struct pci_error_handlers ntb_pci_err_handler = {
 	.resume = ntb_pci_resume,
 };
 
+#ifdef CONFIG_PM
+static int ntb_suspend(struct device *device)
+{
+	struct pci_dev *pdev = to_pci_dev(device);
+	struct ntb_device *ndev = pci_get_drvdata(pdev);
+
+	ntb_hw_link_down(ndev);
+
+	/* FIXME - bringing the link down should disable interrupts, but how
+	 * does this work on BWD or in RP mode?
+	 */
+
+	if (ndev->hw_type == BWD_HW) {
+		cancel_delayed_work_sync(&ndev->link_timer);
+		cancel_delayed_work_sync(&ndev->lr_timer);
+		ntb_link_event(ndev, NTB_LINK_DOWN);
+	}
+
+	return pci_set_power_state(pdev, PCI_D3hot);
+}
+
+static int ntb_resume(struct device *device)
+{
+	struct pci_dev *pdev = to_pci_dev(device);
+	struct ntb_device *ndev = pci_get_drvdata(pdev);
+	int rc;
+
+	rc = pci_set_power_state(pdev, PCI_D0);
+	if (rc)
+		return rc;
+
+	ntb_hw_link_up(ndev);
+
+	if (ndev->hw_type == BWD_HW)
+		schedule_delayed_work(&ndev->link_timer, NTB_LINK_TIMEOUT);
+
+	return 0;
+}
+#endif
+
+SIMPLE_DEV_PM_OPS(ntb_pm_ops, ntb_suspend, ntb_resume);
+
 static struct pci_driver ntb_pci_driver = {
 	.name = KBUILD_MODNAME,
 	.id_table = ntb_pci_tbl,
 	.probe = ntb_pci_probe,
 	.remove = ntb_pci_remove,
 	.err_handler = &ntb_pci_err_handler,
+//FIXME - this should be NULLed when no PM.  Build without PM to verify.
+	.driver.pm = &ntb_pm_ops,
 };
 module_pci_driver(ntb_pci_driver);
