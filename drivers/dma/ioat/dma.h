@@ -97,6 +97,7 @@ struct ioatdma_device {
 	void (*cleanup_fn)(unsigned long data);
 	void (*timer_fn)(unsigned long data);
 	int (*self_test)(struct ioatdma_device *device);
+	void (*suspend)(struct ioat_chan_common *chan);
 };
 
 struct ioat_chan_common {

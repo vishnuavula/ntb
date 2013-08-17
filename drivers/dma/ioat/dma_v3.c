@@ -645,12 +645,63 @@ static void ioat3_cleanup_event(unsigned long data)
 	writew(IOAT_CHANCTRL_RUN, ioat->base.reg_base + IOAT_CHANCTRL_OFFSET);
 }
 
+static inline void ioat3_suspend(struct ioat_chan_common *chan)
+{
+	struct pci_dev *pdev = to_pdev(chan);
+	struct dma_device *dma = &chan->device->common;
+	struct ioat2_dma_chan *ioat = container_of(chan, struct ioat2_dma_chan,
+						   base);
+
+	/* Due to HW errata on Xeon, we must make sure to flush the device prior
+	 * to suspend or reset of the device if there are any XOR operations
+	 * pending.  Instead of inspecting the pending operations, just flush it
+	 * if the channel supports XOR.
+	 */
+	if (is_xeon_cb32(pdev) && dma_has_cap(DMA_XOR, dma->cap_mask) &&
+	    is_ioat_active(ioat_chansts(chan))) {
+		unsigned long end = jiffies + msecs_to_jiffies(100);
+
+		spin_lock_bh(&ioat->prep_lock);
+		while (is_ioat_active(ioat_chansts(chan))) {
+			if (time_after(jiffies, end)) {
+				dev_err(&pdev->dev, "Timeout trying to suspend");
+				break;
+			}
+			cpu_relax();
+		}
+		ioat_suspend(chan);
+		spin_unlock_bh(&ioat->prep_lock);
+	} else
+		ioat_suspend(chan);
+}
+
+static int ioat3_quiesce(struct ioat_chan_common *chan, unsigned long tmo)
+{
+	unsigned long end = jiffies + tmo;
+	int err = 0;
+	u32 status;
+
+	status = ioat_chansts(chan);
+	if (is_ioat_active(status) || is_ioat_idle(status))
+		ioat3_suspend(chan);
+	while (is_ioat_active(status) || is_ioat_idle(status)) {
+		if (tmo && time_after(jiffies, end)) {
+			err = -ETIMEDOUT;
+			break;
+		}
+		status = ioat_chansts(chan);
+		cpu_relax();
+	}
+
+	return err;
+}
+
 static void ioat3_restart_channel(struct ioat2_dma_chan *ioat)
 {
 	struct ioat_chan_common *chan = &ioat->base;
 	u64 phys_complete;
 
-	ioat2_quiesce(chan, 0);
+	ioat3_quiesce(chan, 0);
 	if (ioat3_cleanup_preamble(chan, &phys_complete))
 		__cleanup(ioat, phys_complete);
 
@@ -1689,7 +1740,7 @@ static int ioat3_reset_hw(struct ioat_chan_common *chan)
 	u16 dev_id;
 	int err;
 
-	ioat2_quiesce(chan, msecs_to_jiffies(100));
+	ioat3_quiesce(chan, msecs_to_jiffies(100));
 
 	chanerr = readl(chan->reg_base + IOAT_CHANERR_OFFSET);
 	writel(chanerr, chan->reg_base + IOAT_CHANERR_OFFSET);
@@ -1769,6 +1820,7 @@ int ioat3_dma_probe(struct ioatdma_device *device, int dca)
 	device->reset_hw = ioat3_reset_hw;
 	device->self_test = ioat3_dma_self_test;
 	device->intr_quirk = ioat3_intr_quirk;
+	device->suspend = ioat3_suspend;
 	dma = &device->common;
 	dma->device_prep_dma_memcpy = ioat2_dma_prep_memcpy_lock;
 	dma->device_issue_pending = ioat2_issue_pending;
@@ -1784,8 +1836,10 @@ int ioat3_dma_probe(struct ioatdma_device *device, int dca)
 		device->cap &= ~(IOAT_CAP_XOR | IOAT_CAP_PQ | IOAT_CAP_RAID16SS);
 
 	/* dca is incompatible with raid operations */
-	if (dca_en && (device->cap & (IOAT_CAP_XOR|IOAT_CAP_PQ)))
+	if (dca_en && (device->cap & (IOAT_CAP_XOR|IOAT_CAP_PQ))) {
+		pr_info("%s: DCA enabled, disabling XOR\n", __func__);
 		device->cap &= ~(IOAT_CAP_XOR|IOAT_CAP_PQ);
+	}
 
 	if (device->cap & IOAT_CAP_XOR) {
 		is_raid_device = true;

@@ -890,6 +890,7 @@ int ioat2_dma_probe(struct ioatdma_device *device, int dca)
 	device->cleanup_fn = ioat2_cleanup_event;
 	device->timer_fn = ioat2_timer_event;
 	device->self_test = ioat_dma_self_test;
+	device->suspend = ioat_suspend;
 	dma = &device->common;
 	dma->device_prep_dma_memcpy = ioat2_dma_prep_memcpy_lock;
 	dma->device_issue_pending = ioat2_issue_pending;

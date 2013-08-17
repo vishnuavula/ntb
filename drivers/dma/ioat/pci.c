@@ -126,11 +126,50 @@ struct kmem_cache *ioat2_cache;
 
 #define DRV_NAME "ioatdma"
 
+#ifdef CONFIG_PM
+static int ioat_pm_suspend(struct device *dev)
+{
+	struct pci_dev *pdev = to_pci_dev(dev);
+	struct ioatdma_device *device = pci_get_drvdata(pdev);
+	struct dma_device *dma = &device->common;
+	struct dma_chan *chan;
+
+	list_for_each_entry(chan, &dma->channels, device_node) {
+		struct ioat_dma_chan *ioat = to_ioat_chan(chan);
+
+		dev_info(dev, "Suspending Chan %d\n", chan->chan_id);
+		if (device->suspend)
+			device->suspend(&ioat->base);
+	}
+
+	return 0;
+}
+
+static int ioat_pm_resume(struct device *dev)
+{
+	struct pci_dev *pdev = to_pci_dev(dev);
+	struct ioatdma_device *device = pci_get_drvdata(pdev);
+	struct dma_device *dma = &device->common;
+	struct dma_chan *chan;
+
+	list_for_each_entry(chan, &dma->channels, device_node) {
+		struct ioat_dma_chan *ioat = to_ioat_chan(chan);
+		dev_info(dev, "Starting Chan %d\n", chan->chan_id);
+		ioat_start(&ioat->base);
+	}
+
+	return 0;
+}
+#endif
+
+SIMPLE_DEV_PM_OPS(ioat_pm_ops, ioat_pm_suspend, ioat_pm_resume);
+
 static struct pci_driver ioat_pci_driver = {
 	.name		= DRV_NAME,
 	.id_table	= ioat_pci_tbl,
 	.probe		= ioat_pci_probe,
 	.remove		= ioat_remove,
+	.driver.pm	= &ioat_pm_ops,
 };
 
 static struct ioatdma_device *
