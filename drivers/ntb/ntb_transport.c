@@ -1368,11 +1368,12 @@ ntb_transport_create_queue(void *data, struct pci_dev *pdev,
 	qp->tx_handler = handlers->tx_handler;
 	qp->event_handler = handlers->event_handler;
 
+	dmaengine_get();
 	qp->dma_chan = dma_find_channel(DMA_MEMCPY);
-	if (!qp->dma_chan)
+	if (!qp->dma_chan) {
+		dmaengine_put();
 		dev_info(&pdev->dev, "Unable to allocate DMA channel, using CPU instead\n");
-	else
-		dmaengine_get();
+	}
 
 	qp->rx_entries = kcalloc(NTB_QP_DEF_NUM_ENTRIES,
 				 sizeof(struct ntb_queue_entry),
@@ -1415,8 +1416,15 @@ err3:
 err2:
 	kfree(qp->rx_entries);
 err1:
+<<<<<<< Updated upstream
 	if (qp->dma_chan)
 		dma_release_channel(qp->dma_chan);
+=======
+	while ((entry = ntb_list_rm(&qp->ntb_rx_free_q_lock, &qp->rx_free_q)))
+		kfree(entry);
+	if (qp->dma_chan)
+		dmaengine_put();
+>>>>>>> Stashed changes
 	set_bit(free_queue, &nt->qp_bitmap);
 err:
 	return NULL;
