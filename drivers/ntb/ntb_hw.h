@@ -86,6 +86,9 @@ static inline void writeq(u64 val, void __iomem *addr)
 
 #define NTB_MAX_NUM_MW		2
 
+/* Translate memory window 0,1 to BAR 2,4 */
+#define MW_TO_BAR(mw)	(mw * NTB_MAX_NUM_MW + 2)
+
 enum ntb_hw_event {
 	NTB_EVENT_SW_EVENT0 = 0,
 	NTB_EVENT_SW_EVENT1,
@@ -93,6 +96,17 @@ enum ntb_hw_event {
 	NTB_EVENT_HW_ERROR,
 	NTB_EVENT_HW_LINK_UP,
 	NTB_EVENT_HW_LINK_DOWN,
+};
+
+enum {
+	NTB_CONN_TRANSPARENT = 0,
+	NTB_CONN_B2B,
+	NTB_CONN_RP,
+};
+
+enum {
+	NTB_DEV_USD = 0,
+	NTB_DEV_DSD,
 };
 
 struct ntb_mw {
@@ -135,8 +149,9 @@ struct ntb_device {
 	struct ntb_transport *ntb_transport;
 	void (*event_cb)(void *handle, enum ntb_hw_event event);
 
+	void (*ring_doorbell)(struct ntb_device *ndev, unsigned int db);
+
 	struct ntb_db_cb *db_cb;
-	unsigned char hw_type;
 	unsigned char conn_type;
 	unsigned char dev_type;
 	unsigned char num_msix;
@@ -243,5 +258,12 @@ u64 ntb_get_mw_size(struct ntb_device *ndev, unsigned int mw);
 void ntb_ring_doorbell(struct ntb_device *ndev, unsigned int idx);
 void *ntb_find_transport(struct pci_dev *pdev);
 
+int ntb_setup_hw(struct ntb_device *ndev);
+void ntb_remove_hw(struct ntb_device *ndev);
+
 int ntb_transport_init(struct pci_dev *pdev);
 void ntb_transport_free(void *transport);
+
+
+
+int ntb_hw_setup_transport(struct ntb_device *ndev);

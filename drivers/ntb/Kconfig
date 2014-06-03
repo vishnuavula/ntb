@@ -1,7 +1,6 @@
-config NTB
-       tristate "Intel Non-Transparent Bridge support"
+menuconfig NTB
+       tristate "Non-Transparent Bridge support"
        depends on PCI
-       depends on X86
        help
         The PCI-E Non-transparent bridge hardware is a point-to-point PCI-E bus
         connecting 2 systems.  When configured, writes to the device's PCI
@@ -11,3 +10,26 @@ config NTB
 
         If unsure, say N.
 
+if NTB
+
+comment "NTB Devices"
+
+config NTB_XEON
+       tristate "Intel Xeon Non-Transparent Bridge support"
+       depends on NTB
+       depends on X86
+       help
+	This driver supports Intel Xeon family of Non-Transparent Bridge devices
+
+        If unsure, say N.
+
+config NTB_ATOM
+       tristate "Intel Atom Non-Transparent Bridge support"
+       depends on NTB
+       depends on X86
+       help
+	This driver supports Intel Atom family of Non-Transparent Bridge devices
+
+        If unsure, say N.
+
+endif

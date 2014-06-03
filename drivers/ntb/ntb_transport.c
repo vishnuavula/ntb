@@ -509,7 +509,12 @@ static void ntb_transport_setup_qp_mw(struct ntb_transport *nt,
 	mw_num = QP_TO_MW(nt->ndev, qp_num);
 
 	WARN_ON(nt->mw[mw_num].virt_addr == NULL);
+	BUG_ON(nt->max_qps < mw_max);
 
+	/* To create an even distribution of the qps over the MWs, we divide
+	 * them evenly.  When the division is not even, we load the earlier MWs
+	 * heavier.
+	 */
 	if (nt->max_qps % mw_max && mw_num + 1 < nt->max_qps / mw_max)
 		num_qps_mw = nt->max_qps / mw_max + 1;
 	else
@@ -869,6 +874,14 @@ static int ntb_transport_init_queue(struct ntb_transport *nt,
 	qp->client_ready = NTB_LINK_DOWN;
 	qp->event_handler = NULL;
 
+	/* Cannot have more MWs than qps, or we have a div by 0 below */
+	if (nt->max_qps < mw_max)
+		return -EINVAL;
+
+	/* To create an even distribution of the qps over the MWs, we divide
+	 * them evenly.  When the division is not even, we load the earlier MWs
+	 * heavier.
+	 */
 	if (nt->max_qps % mw_max && mw_num + 1 < nt->max_qps / mw_max)
 		num_qps_mw = nt->max_qps / mw_max + 1;
 	else
