@@ -53,6 +53,8 @@
 #include <linux/pci.h>
 #include <linux/random.h>
 #include <linux/slab.h>
+#include <linux/msi.h>
+#include <linux/interrupt.h>
 #include "ntb_hw.h"
 #include "ntb_regs.h"
 
@@ -150,16 +152,18 @@ static void ntb_set_errata_flags(struct ntb_device *ndev)
 	case PCI_DEVICE_ID_INTEL_NTB_SS_JSF:
 	case PCI_DEVICE_ID_INTEL_NTB_SS_SNB:
 	case PCI_DEVICE_ID_INTEL_NTB_SS_IVT:
-	case PCI_DEVICE_ID_INTEL_NTB_SS_HSX:
 	case PCI_DEVICE_ID_INTEL_NTB_PS_JSF:
 	case PCI_DEVICE_ID_INTEL_NTB_PS_SNB:
 	case PCI_DEVICE_ID_INTEL_NTB_PS_IVT:
-	case PCI_DEVICE_ID_INTEL_NTB_PS_HSX:
 	case PCI_DEVICE_ID_INTEL_NTB_B2B_JSF:
 	case PCI_DEVICE_ID_INTEL_NTB_B2B_SNB:
 	case PCI_DEVICE_ID_INTEL_NTB_B2B_IVT:
-	case PCI_DEVICE_ID_INTEL_NTB_B2B_HSX:
 		ndev->wa_flags |= WA_SNB_ERR;
+		break;
+	case PCI_DEVICE_ID_INTEL_NTB_SS_HSX:
+	case PCI_DEVICE_ID_INTEL_NTB_PS_HSX:
+	case PCI_DEVICE_ID_INTEL_NTB_B2B_HSX:
+		ndev->wa_flags |= WA_HSX_ERR;
 		break;
 	}
 }
@@ -209,9 +213,13 @@ static void ntb_irq_work(unsigned long data)
 		struct ntb_device *ndev = db_cb->ndev;
 		unsigned long mask;
 
-		mask = readw(ndev->reg_ofs.ldb_mask);
-		clear_bit(db_cb->db_num * ndev->bits_per_vector, &mask);
-		writew(mask, ndev->reg_ofs.ldb_mask);
+		if (ndev->wa_flags & WA_HSX_ERR)
+			enable_irq(db_cb->irq);
+		else {
+			mask = readw(ndev->reg_ofs.ldb_mask);
+			clear_bit(db_cb->db_num * ndev->bits_per_vector, &mask);
+			writew(mask, ndev->reg_ofs.ldb_mask);
+		}
 	}
 }
 
@@ -246,9 +254,12 @@ int ntb_register_db_callback(struct ntb_device *ndev, unsigned int idx,
 		     (unsigned long) &ndev->db_cb[idx]);
 
 	/* unmask interrupt */
-	mask = readw(ndev->reg_ofs.ldb_mask);
-	clear_bit(idx * ndev->bits_per_vector, &mask);
-	writew(mask, ndev->reg_ofs.ldb_mask);
+	if (!(ndev->wa_flags & WA_HSX_ERR)) {
+		/* unmask interrupt */
+		mask = readw(ndev->reg_ofs.ldb_mask);
+		clear_bit(idx * ndev->bits_per_vector, &mask);
+		writew(mask, ndev->reg_ofs.ldb_mask);
+	}
 
 	return 0;
 }
@@ -268,9 +279,11 @@ void ntb_unregister_db_callback(struct ntb_device *ndev, unsigned int idx)
 	if (idx >= ndev->max_cbs || !ndev->db_cb[idx].callback)
 		return;
 
-	mask = readw(ndev->reg_ofs.ldb_mask);
-	set_bit(idx * ndev->bits_per_vector, &mask);
-	writew(mask, ndev->reg_ofs.ldb_mask);
+	if (!(ndev->wa_flags & WA_HSX_ERR)) {
+		mask = readw(ndev->reg_ofs.ldb_mask);
+		set_bit(idx * ndev->bits_per_vector, &mask);
+		writew(mask, ndev->reg_ofs.ldb_mask);
+	}
 
 	tasklet_disable(&ndev->db_cb[idx].irq_work);
 
@@ -518,6 +531,17 @@ void ntb_set_mw_addr(struct ntb_device *ndev, unsigned int mw, u64 addr)
 	}
 }
 
+static void ntb_generate_rirq(struct ntb_device *ndev, int vec)
+{
+	if (vec > 2) {
+		dev_err(&ndev->pdev->dev, "%s: vec %d out of bounds\n",
+			__func__, vec);
+		return;
+	}
+
+	writel(ndev->rirq[vec].data, ndev->mw[1].vbase + ndev->rirq[vec].ofs);
+}
+
 /**
  * ntb_ring_doorbell() - Set the doorbell on the secondary/external side
  * @ndev: pointer to ntb_device instance
@@ -532,7 +556,9 @@ void ntb_ring_doorbell(struct ntb_device *ndev, unsigned int db)
 {
 	dev_dbg(&ndev->pdev->dev, "%s: ringing doorbell %d\n", __func__, db);
 
-	if (ndev->hw_type == BWD_HW)
+	if (ndev->wa_flags & WA_HSX_ERR)
+		ntb_generate_rirq(ndev, db);
+	else if (ndev->hw_type == BWD_HW)
 		writeq((u64) 1 << db, ndev->reg_ofs.rdb);
 	else
 		writew(((1 << ndev->bits_per_vector) - 1) <<
@@ -794,7 +820,26 @@ static int ntb_xeon_setup(struct ntb_device *ndev)
 			 * the driver defaults, but write the Limit registers
 			 * first just in case.
 			 */
-			if (ndev->split_bar)
+			if (ndev->wa_flags & WA_HSX_ERR) {
+				/* using BAR4, must be set to 1M */
+				if (ndev->mw[1].bar_sz != 0x100000) {
+					dev_err(&ndev->pdev->dev,
+						"BAR4 must be 1M\n");
+					return -EINVAL;
+				}
+
+				/* set limit to 1M according to spec */
+				writel(pci_resource_start(ndev->pdev, 1) + 0x100000,
+				       ndev->reg_base + SNB_PBAR4LMT_OFFSET);
+				/*
+				 * need to point SBAR4XLAT to remote
+				 * interrupt region
+				 */
+				writel(0xfee00000,
+				       ndev->reg_base + SNB_SBAR4XLAT_OFFSET);
+
+				ndev->limits.max_mw = HSX_ERRATA_MAX_MW;
+			} else if (ndev->split_bar)
 				ndev->limits.max_mw = HSX_SPLITBAR_MAX_MW;
 			else
 				ndev->limits.max_mw = SNB_MAX_MW;
@@ -917,7 +962,22 @@ static int ntb_xeon_setup(struct ntb_device *ndev)
 		if (ndev->split_bar) {
 			ndev->reg_ofs.bar5_xlat =
 				ndev->reg_base + SNB_SBAR5XLAT_OFFSET;
-			ndev->limits.max_mw = HSX_SPLITBAR_MAX_MW;
+
+			if (ndev->wa_flags & WA_HSX_ERR) {
+				/* using BAR4, must be set to 1M */
+				if (ndev->mw[1].bar_sz != 0x100000) {
+					dev_err(&ndev->pdev->dev,
+						"BAR4 must be 1M\n");
+					return -EINVAL;
+				}
+
+				/* set limit to 1M according to spec */
+				writel(pci_resource_start(ndev->pdev, 1) + 0x100000,
+				       ndev->reg_base + SNB_PBAR4LMT_OFFSET);
+				writel(0xfee00000, ndev->reg_ofs.bar4_xlat);
+				ndev->limits.max_mw = HSX_ERRATA_MAX_MW;
+			} else
+				ndev->limits.max_mw = HSX_SPLITBAR_MAX_MW;
 		} else
 			ndev->limits.max_mw = SNB_MAX_MW;
 		break;
@@ -949,7 +1009,22 @@ static int ntb_xeon_setup(struct ntb_device *ndev)
 		if (ndev->split_bar) {
 			ndev->reg_ofs.bar5_xlat =
 				ndev->reg_base + SNB_PBAR5XLAT_OFFSET;
-			ndev->limits.max_mw = HSX_SPLITBAR_MAX_MW;
+
+			if (ndev->wa_flags & WA_HSX_ERR) {
+				/* using BAR4, must be set to 1M */
+				if (ndev->mw[1].bar_sz != 0x100000) {
+					dev_err(&ndev->pdev->dev,
+						"BAR4 must be 1M\n");
+					return -EINVAL;
+				}
+
+				/* set limit to 1M according to spec */
+				writel(pci_resource_start(ndev->pdev, 1) + 0x100000,
+				       ndev->reg_base + SNB_PBAR4LMT_OFFSET);
+				writel(0xfee00000, ndev->reg_ofs.bar4_xlat);
+				ndev->limits.max_mw = HSX_ERRATA_MAX_MW;
+			} else
+				ndev->limits.max_mw = HSX_SPLITBAR_MAX_MW;
 		} else
 			ndev->limits.max_mw = SNB_MAX_MW;
 		break;
@@ -1091,9 +1166,14 @@ static irqreturn_t xeon_callback_msix_irq(int irq, void *data)
 	dev_dbg(&ndev->pdev->dev, "MSI-X irq %d received for DB %d\n", irq,
 		db_cb->db_num);
 
-	mask = readw(ndev->reg_ofs.ldb_mask);
-	set_bit(db_cb->db_num * ndev->bits_per_vector, &mask);
-	writew(mask, ndev->reg_ofs.ldb_mask);
+	if (ndev->wa_flags & WA_HSX_ERR) {
+		disable_irq_nosync(irq);
+		db_cb->irq = irq;
+	} else {
+		mask = readw(ndev->reg_ofs.ldb_mask);
+		set_bit(db_cb->db_num * ndev->bits_per_vector, &mask);
+		writew(mask, ndev->reg_ofs.ldb_mask);
+	}
 
 	tasklet_schedule(&db_cb->irq_work);
 
@@ -1102,8 +1182,11 @@ static irqreturn_t xeon_callback_msix_irq(int irq, void *data)
 	 * vectors, with the 4th having a single bit for link
 	 * interrupts.
 	 */
-	writew(((1 << ndev->bits_per_vector) - 1) <<
-	       (db_cb->db_num * ndev->bits_per_vector), ndev->reg_ofs.ldb);
+	if (!(ndev->wa_flags & WA_HSX_ERR)) {
+		writew(((1 << ndev->bits_per_vector) - 1) <<
+			(db_cb->db_num * ndev->bits_per_vector),
+			ndev->reg_ofs.ldb);
+	}
 
 	return IRQ_HANDLED;
 }
@@ -1166,6 +1249,9 @@ static int ntb_setup_snb_msix(struct ntb_device *ndev, int msix_entries)
 	struct pci_dev *pdev = ndev->pdev;
 	struct msix_entry *msix;
 	int rc, i;
+	struct msi_desc *entry;
+	u32 laddr = 0;
+	u32 data = 0;
 
 	if (msix_entries < ndev->limits.msix_cnt)
 		return -ENOSPC;
@@ -1196,6 +1282,31 @@ static int ntb_setup_snb_msix(struct ntb_device *ndev, int msix_entries)
 
 	ndev->num_msix = msix_entries;
 	ndev->max_cbs = msix_entries - 1;
+
+	if (ndev->wa_flags & WA_HSX_ERR) {
+		i = 0;
+
+		/*
+		 * acquire the interrupt region in the LAPIC for the
+		 * MSIX vectors
+		 */
+		list_for_each_entry(entry, &pdev->msi_list, list) {
+			unsigned int offset = ndev->msix_entries[i].entry *
+				PCI_MSIX_ENTRY_SIZE;
+
+			laddr = readl(entry->mask_base + offset +
+					PCI_MSIX_ENTRY_LOWER_ADDR);
+			dev_dbg(&pdev->dev, "local lower MSIX addr(%d): %#x\n",
+				i, laddr);
+			ndev->lirq[i].ofs = 0x1fffff & laddr;
+			data = readl(entry->mask_base + offset +
+					PCI_MSIX_ENTRY_DATA);
+			dev_dbg(&pdev->dev, "local MSIX data(%d): %#x\n",
+				i, data);
+			ndev->lirq[i].data = data;
+			i++;
+		}
+	}
 
 	return 0;
 
@@ -1294,6 +1405,11 @@ static int ntb_setup_msi(struct ntb_device *ndev)
 	struct pci_dev *pdev = ndev->pdev;
 	int rc;
 
+	if (ndev->wa_flags & WA_HSX_ERR) {
+		dev_err(&pdev->dev, "Platform errata does not support MSI\n");
+		return -EINVAL;
+	}
+
 	rc = pci_enable_msi(pdev);
 	if (rc)
 		return rc;
@@ -1312,6 +1428,11 @@ static int ntb_setup_intx(struct ntb_device *ndev)
 {
 	struct pci_dev *pdev = ndev->pdev;
 	int rc;
+
+	if (ndev->wa_flags & WA_HSX_ERR) {
+		dev_err(&pdev->dev, "Platform errata does not support INTX\n");
+		return -EINVAL;
+	}
 
 	pci_msi_off(pdev);
 
@@ -1728,6 +1849,18 @@ static int ntb_pci_probe(struct pci_dev *pdev, const struct pci_device_id *id)
 	if (rc)
 		goto err;
 
+	if (!ndev->split_bar && (ndev->wa_flags & WA_HSX_ERR)) {
+		dev_warn(&pdev->dev,
+			 "Please config NTB split BAR for errata workaround\n");
+		rc = -EINVAL;
+		goto err;
+	}
+
+	/*
+	 * From this point on we will assume that split BAR is set when
+	 * WA_HSX_ERR is set
+	 */
+
 	ndev->mw = kcalloc(ndev->limits.max_mw, sizeof(struct ntb_mw),
 			   GFP_KERNEL);
 	if (!ndev->mw) {
@@ -1759,8 +1892,7 @@ static int ntb_pci_probe(struct pci_dev *pdev, const struct pci_device_id *id)
 		 * with the errata we need to steal last of the memory
 		 * windows for workarounds and they point to MMIO registers.
 		 */
-		if ((ndev->wa_flags & WA_SNB_ERR) &&
-		    (i == (ndev->limits.max_mw - 1))) {
+		if ((ndev->wa_flags & (WA_SNB_ERR | WA_HSX_ERR)) && (i > 0)) {
 			ndev->mw[i].vbase =
 				ioremap_nocache(pci_resource_start(pdev,
 							MW_TO_BAR(i)),

@@ -60,6 +60,7 @@
 #define HSX_SPLITBAR_MAX_MW	3
 #define SNB_MAX_MW		2
 #define SNB_ERRATA_MAX_MW	1
+#define HSX_ERRATA_MAX_MW	1
 
 #define SNB_DB_HW_LINK		0x8000
 

@@ -109,9 +109,16 @@ struct ntb_db_cb {
 	void *data;
 	struct ntb_device *ndev;
 	struct tasklet_struct irq_work;
+	unsigned int irq;
+};
+
+struct msix_info {
+	u32 ofs;
+	u32 data;
 };
 
 #define WA_SNB_ERR	0x00000001
+#define WA_HSX_ERR	0x00000002
 
 struct ntb_device {
 	struct pci_dev *pdev;
@@ -161,6 +168,8 @@ struct ntb_device {
 	struct dentry *debugfs_info;
 
 	unsigned int wa_flags;
+	struct msix_info lirq[4];
+	struct msix_info rirq[4];
 };
 
 /**

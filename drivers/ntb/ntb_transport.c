@@ -56,6 +56,7 @@
 #include <linux/pci.h>
 #include <linux/slab.h>
 #include <linux/types.h>
+#include <linux/sched.h>
 #include "ntb_hw.h"
 
 #define NTB_TRANSPORT_VERSION	3
@@ -188,15 +189,24 @@ struct ntb_payload_header {
 	unsigned int flags;
 };
 
+/*
+ * Using 7 scratch pads, 1 left
+ * VERSION
+ * QP_LINKS
+ * NUM_QPS NUM_MWS
+ * MW0_SZ MW1_SZ MW2_SZ MW3_SZ
+ * DATA0 MSIX_OFS0
+ * DATA1 MSIX_OFS1
+ * DATA2 MSIX_OFS2
+ */
 enum {
 	VERSION = 0,
 	QP_LINKS,
-	NUM_QPS,
 	NUM_MWS,
-	MW0_SZ_HIGH,
-	MW0_SZ_LOW,
-	MW1_SZ_HIGH,
-	MW1_SZ_LOW,
+	MW_SZ,
+	MSIX_OFS0,
+	MSIX_OFS1,
+	MSIX_OFS2,
 	MAX_SPAD,
 };
 
@@ -687,37 +697,45 @@ static void ntb_transport_link_work(struct work_struct *work)
 	int rc, i;
 
 	/* send the local info, in the opposite order of the way we read it */
-	for (i = 0; i < ntb_max_mw(ndev); i++) {
-		rc = ntb_write_remote_spad(ndev, MW0_SZ_HIGH + (i * 2),
-					   ntb_get_mw_size(ndev, i) >> 32);
-		if (rc) {
-			dev_err(&pdev->dev, "Error writing %u to remote spad %d\n",
-				(u32)(ntb_get_mw_size(ndev, i) >> 32),
-				MW0_SZ_HIGH + (i * 2));
-			goto out;
-		}
 
-		rc = ntb_write_remote_spad(ndev, MW0_SZ_LOW + (i * 2),
-					   (u32) ntb_get_mw_size(ndev, i));
+	for (i = 0; i < 3; i++) {
+		val = (ndev->lirq[i].ofs & 0x1fffff) |
+		      (ndev->lirq[i].data & 0xff) << 24;
+
+		rc = ntb_write_remote_spad(ndev, MSIX_OFS0 + i, val);
 		if (rc) {
-			dev_err(&pdev->dev, "Error writing %u to remote spad %d\n",
-				(u32) ntb_get_mw_size(ndev, i),
-				MW0_SZ_LOW + (i * 2));
+			dev_err(&pdev->dev, "Error writing %x to remote spad %d\n",
+				val, MSIX_OFS0 + i);
 			goto out;
 		}
 	}
 
-	rc = ntb_write_remote_spad(ndev, NUM_MWS, ntb_max_mw(ndev));
-	if (rc) {
-		dev_err(&pdev->dev, "Error writing %x to remote spad %d\n",
-			ntb_max_mw(ndev), NUM_MWS);
+	if (ntb_max_mw(ndev) > 4) {
+		dev_err(&pdev->dev,
+			"Greater than 4 memory window unsupported!\n");
 		goto out;
 	}
 
-	rc = ntb_write_remote_spad(ndev, NUM_QPS, nt->max_qps);
+	val = 0;
+	for (i = 0; i < ntb_max_mw(ndev); i++) {
+		u32 size;
+
+		size = ilog2(rounddown_pow_of_two(ntb_get_mw_size(ndev, i)));
+		val |= (size & 0xff) << (8 * i);
+	}
+
+	rc = ntb_write_remote_spad(ndev, MW_SZ, val);
 	if (rc) {
-		dev_err(&pdev->dev, "Error writing %x to remote spad %d\n",
-			nt->max_qps, NUM_QPS);
+		dev_err(&pdev->dev, "Error writing %#x to remote spad %d\n",
+			val, MW_SZ);
+		goto out;
+	}
+
+	val = (ntb_max_mw(ndev) & 0xffff) | (nt->max_qps & 0xffff) << 16;
+	rc = ntb_write_remote_spad(ndev, NUM_MWS, val);
+	if (rc) {
+		dev_err(&pdev->dev, "Error writing %#x to remote spad %d\n",
+			val, NUM_MWS);
 		goto out;
 	}
 
@@ -739,52 +757,54 @@ static void ntb_transport_link_work(struct work_struct *work)
 		goto out;
 	dev_dbg(&pdev->dev, "Remote version = %d\n", val);
 
-	rc = ntb_read_remote_spad(ndev, NUM_QPS, &val);
-	if (rc) {
-		dev_err(&pdev->dev, "Error reading remote spad %d\n", NUM_QPS);
-		goto out;
-	}
-
-	if (val != nt->max_qps)
-		goto out;
-	dev_dbg(&pdev->dev, "Remote max number of qps = %d\n", val);
-
 	rc = ntb_read_remote_spad(ndev, NUM_MWS, &val);
 	if (rc) {
 		dev_err(&pdev->dev, "Error reading remote spad %d\n", NUM_MWS);
 		goto out;
 	}
 
-	if (val != ntb_max_mw(ndev))
+	if (((val >> 16) & 0xffff) != nt->max_qps)
 		goto out;
-	dev_dbg(&pdev->dev, "Remote number of mws = %d\n", val);
+
+	dev_dbg(&pdev->dev, "Remote max number of qps = %d\n",
+		(val >> 16) & 0xffff);
+
+	if ((val & 0xffff) != ntb_max_mw(ndev))
+		goto out;
+
+	dev_dbg(&pdev->dev, "Remote number of mws = %d\n", val & 0xffff);
+
+	rc = ntb_read_remote_spad(ndev, MW_SZ, &val);
+	if (rc) {
+		dev_err(&pdev->dev, "Error reading remote spad %d\n", MW_SZ);
+		goto out1;
+	}
 
 	for (i = 0; i < ntb_max_mw(ndev); i++) {
-		u64 val64;
-
-		rc = ntb_read_remote_spad(ndev, MW0_SZ_HIGH + (i * 2), &val);
-		if (rc) {
-			dev_err(&pdev->dev, "Error reading remote spad %d\n",
-				MW0_SZ_HIGH + (i * 2));
-			goto out1;
-		}
-
-		val64 = (u64) val << 32;
-
-		rc = ntb_read_remote_spad(ndev, MW0_SZ_LOW + (i * 2), &val);
-		if (rc) {
-			dev_err(&pdev->dev, "Error reading remote spad %d\n",
-				MW0_SZ_LOW + (i * 2));
-			goto out1;
-		}
-
-		val64 |= val;
+		u64 val64 = 1 << ((val >> (i * 8)) & 0xff);
 
 		dev_dbg(&pdev->dev, "Remote MW%d size = %llu\n", i, val64);
 
 		rc = ntb_set_mw(nt, i, val64);
 		if (rc)
 			goto out1;
+	}
+
+	for (i = 0; i < 3; i++) {
+		rc = ntb_read_remote_spad(ndev, MSIX_OFS0 + i, &val);
+		if (rc) {
+			dev_err(&pdev->dev,
+				"Error reading remote spad %d\n",
+				MSIX_OFS0 + i);
+			goto out;
+		}
+
+		ndev->rirq[i].ofs = 0x1ffff & val;
+		ndev->rirq[i].data = (val >> 24) & 0xff;
+		dev_dbg(&pdev->dev, "received MSIX_OFS%d: %#x\n",
+			i, ndev->rirq[i].ofs);
+		dev_dbg(&pdev->dev, "received MSIX_DATA%d: %#x\n",
+			i, ndev->rirq[i].data);
 	}
 
 	nt->transport_link = NTB_LINK_UP;
